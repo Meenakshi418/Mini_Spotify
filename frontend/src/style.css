@@ -883,6 +883,267 @@ button:disabled {
 }
 
 /* =========================================================
+   PLAYLISTS
+   ========================================================= */
+
+.playlists-section {
+  width: min(var(--container), 100%);
+  margin: 0 auto 30px;
+}
+
+.playlists-section .search-heading-row {
+  margin-bottom: 14px;
+}
+
+.playlists-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.playlists-list button {
+  padding: 10px 16px;
+
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 12px;
+
+  color: var(--text);
+
+  background:
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.07),
+      rgba(255, 255, 255, 0.025)
+    );
+
+  box-shadow:
+    0 10px 25px rgba(0, 0, 0, 0.18);
+
+  transition:
+    transform 0.2s ease,
+    border-color 0.2s ease,
+    background 0.2s ease;
+}
+
+.playlists-list button:hover {
+  transform: translateY(-2px);
+
+  border-color: var(--border-purple);
+
+  background:
+    linear-gradient(
+      135deg,
+      rgba(168, 85, 247, 0.14),
+      rgba(96, 125, 255, 0.08)
+    );
+}
+
+.playlists-section > button {
+  margin-bottom: 14px;
+
+  padding: 10px 16px;
+
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+
+  color: white;
+
+  background: var(--gradient-main);
+
+  box-shadow:
+    0 9px 25px rgba(117, 76, 255, 0.25);
+
+  font-size: 11px;
+  font-weight: 800;
+
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.playlists-section > button:hover {
+  transform: translateY(-2px);
+
+  box-shadow:
+    0 13px 32px rgba(117, 76, 255, 0.38);
+}
+
+
+/* =========================================================
+   PLAYLIST ITEMS
+   ========================================================= */
+
+.playlists-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.playlist-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.playlist-item > button:first-child {
+  padding: 10px 16px;
+
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 12px;
+
+  color: var(--text);
+
+  background:
+    linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.07),
+      rgba(255, 255, 255, 0.025)
+    );
+
+  transition: 0.2s ease;
+}
+
+.playlist-item > button:first-child:hover,
+.playlist-active > button:first-child {
+  border-color: var(--border-purple);
+
+  background:
+    linear-gradient(
+      135deg,
+      rgba(168, 85, 247, 0.16),
+      rgba(96, 125, 255, 0.08)
+    );
+}
+
+.playlist-delete {
+  width: 30px;
+  height: 30px;
+
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
+
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.035);
+
+  font-size: 16px;
+}
+
+.playlist-delete:hover {
+  color: white;
+  background: rgba(255, 80, 100, 0.12);
+}
+
+/* =========================================================
+   SELECTED PLAYLIST
+   ========================================================= */
+
+.selected-playlist {
+  margin-top: 24px;
+  padding: 20px;
+
+  border: 1px solid var(--border);
+  border-radius: 18px;
+
+  background:
+    linear-gradient(
+      145deg,
+      rgba(255, 255, 255, 0.055),
+      rgba(255, 255, 255, 0.018)
+    );
+
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.20);
+}
+
+.selected-playlist-header h3 {
+  margin: 5px 0 18px;
+
+  font-size: 22px;
+}
+
+.playlist-song-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.playlist-song {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  padding: 11px 13px;
+
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.playlist-song > div {
+  flex: 1;
+  min-width: 0;
+
+  display: flex;
+  flex-direction: column;
+}
+
+.playlist-song strong {
+  overflow: hidden;
+
+  white-space: nowrap;
+  text-overflow: ellipsis;
+
+  font-size: 12px;
+}
+
+.playlist-song span {
+  margin-top: 3px;
+
+  color: var(--text-muted);
+
+  font-size: 10px;
+}
+
+.playlist-song button {
+  padding: 7px 11px;
+
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 9px;
+
+  color: white;
+  background: rgba(255, 255, 255, 0.05);
+
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.playlist-song button:hover {
+  background: rgba(168, 85, 247, 0.12);
+}
+
+/* =========================================================
+   ADD TO PLAYLIST BUTTON
+   ========================================================= */
+
+.playlist-button {
+  border: 1px solid rgba(168, 85, 247, 0.20);
+
+  color: #cda3ff;
+
+  background:
+    rgba(168, 85, 247, 0.07);
+}
+
+.playlist-button:hover {
+  border-color: rgba(168, 85, 247, 0.40);
+
+  color: white;
+
+  background:
+    rgba(168, 85, 247, 0.14);
+}
+
+/* =========================================================
    STATUS
    ========================================================= */
 

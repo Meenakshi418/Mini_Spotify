@@ -16,6 +16,10 @@ function App() {
 
   const [likedSongs, setLikedSongs] = useState([]);
 
+  const [playlists, setPlaylists] = useState([]);
+  const [selectedPlaylist, setSelectedPlaylist] = useState(null);
+  const [playlistSongs, setPlaylistSongs] = useState([]);
+
   const [loading, setLoading] = useState(true);
   const [loggingIn, setLoggingIn] = useState(false);
   const [likingId, setLikingId] = useState(null);
@@ -62,6 +66,228 @@ function App() {
     }
   }
 
+  /* LOAD PLAYLISTS */
+
+  async function loadPlaylists() {
+    if (!token) return;
+
+    try {
+      const res = await axios.get(`${API}/api/playlists`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      setPlaylists(res.data);
+    } catch (err) {
+      console.error("Playlist loading error:", err);
+    }
+  }
+
+    /* =================================================
+      CREATE PLAYLIST
+      ================================================= */
+
+  async function createPlaylist() {
+    if (!token) {
+      setStatus("Please log in first");
+      return;
+    }
+
+    const name = window.prompt("Enter playlist name:");
+
+    if (!name?.trim()) return;
+
+    try {
+      await axios.post(
+        `${API}/api/playlists`,
+        { name: name.trim() },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      await loadPlaylists();
+      setStatus("Playlist created");
+    } catch (err) {
+      console.error("Playlist creation error:", err);
+      setStatus("Unable to create playlist");
+    }
+  }
+
+  /* =================================================
+    LOAD PLAYLIST SONGS
+    ================================================= */
+
+  async function loadPlaylistSongs(playlistId) {
+    if (!token) return;
+
+    try {
+      const res = await axios.get(
+        `${API}/api/playlists/${playlistId}/songs`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      setPlaylistSongs(res.data);
+    } catch (err) {
+      console.error("Playlist songs loading error:", err);
+      setPlaylistSongs([]);
+    }
+  }
+
+  /* =================================================
+    SELECT PLAYLIST
+    ================================================= */
+
+  async function selectPlaylist(playlist) {
+    setSelectedPlaylist(playlist);
+    await loadPlaylistSongs(playlist.id);
+  }
+
+ /* =================================================
+    ADD SONG TO PLAYLIST
+    ================================================= */
+
+  async function addSongToPlaylist(song) {
+    if (!token) {
+      setStatus("Please log in first");
+      return;
+    }
+
+    if (playlists.length === 0) {
+      setStatus("Create a playlist first");
+      return;
+    }
+
+    const playlistChoices = playlists
+      .map((playlist, index) => `${index + 1}. ${playlist.name}`)
+      .join("\n");
+
+    const choice = window.prompt(
+      `Add "${song.title}" to which playlist?\n\n${playlistChoices}\n\nEnter number:`
+    );
+
+    if (choice === null) {
+      setStatus("Add cancelled");
+      return;
+    }
+
+    const index = Number(choice) - 1;
+
+    if (
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index >= playlists.length
+    ) {
+      setStatus("Invalid playlist number");
+      return;
+    }
+
+    const playlist = playlists[index];
+
+    setStatus(`Adding "${song.title}"...`);
+
+    try {
+      const res = await axios.post(
+        `${API}/api/playlists/${playlist.id}/songs`,
+        {
+          song_id: song.id,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      console.log("Add response:", res.data);
+
+      setStatus(`✓ Added "${song.title}" to "${playlist.name}"`);
+
+      if (selectedPlaylist?.id === playlist.id) {
+        await loadPlaylistSongs(playlist.id);
+      }
+    } catch (err) {
+      console.error("Add to playlist error:", err);
+      console.error("Backend response:", err.response?.data);
+
+      setStatus(
+        err.response?.data?.detail ||
+        "Could not add song to playlist"
+      );
+    }
+  }
+
+  /* =================================================
+    REMOVE SONG FROM PLAYLIST
+    ================================================= */
+
+  async function removeSongFromPlaylist(songId) {
+    if (!selectedPlaylist) return;
+
+    try {
+      await axios.delete(
+        `${API}/api/playlists/${selectedPlaylist.id}/songs/${songId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      await loadPlaylistSongs(selectedPlaylist.id);
+      setStatus("Song removed from playlist");
+    } catch (err) {
+      console.error("Remove playlist song error:", err);
+      setStatus("Unable to remove song");
+    }
+  }
+
+  /* =================================================
+    DELETE PLAYLIST
+    ================================================= */
+
+  async function deletePlaylist(playlistId) {
+    if (!token) return;
+
+    const playlist = playlists.find(
+      (item) => item.id === playlistId
+    );
+
+    if (!playlist) return;
+
+    const confirmed = window.confirm(
+      `Delete playlist "${playlist.name}"?`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      await axios.delete(`${API}/api/playlists/${playlistId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (selectedPlaylist?.id === playlistId) {
+        setSelectedPlaylist(null);
+        setPlaylistSongs([]);
+      }
+
+      await loadPlaylists();
+      setStatus("Playlist deleted");
+    } catch (err) {
+      console.error("Delete playlist error:", err);
+      setStatus("Unable to delete playlist");
+    }
+  }
+
   /* =====================================================
      INITIAL LOAD
      ===================================================== */
@@ -70,6 +296,11 @@ function App() {
     loadSongs();
   }, []);
 
+  useEffect(() => {
+    if (token) {
+      loadPlaylists();
+    }
+  }, [token]);
   /* =====================================================
      STATUS AUTO HIDE
      ===================================================== */
@@ -595,6 +826,118 @@ function App() {
       )}
 
       {/* =================================================
+          PLAYLISTS
+          ================================================= */}
+
+      <section className="playlists-section">
+
+        <div className="search-heading-row">
+          <div>
+            <span className="search-eyebrow">YOUR PLAYLISTS</span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={createPlaylist}
+        >
+          + Create Playlist
+        </button>
+
+        {playlists.length === 0 ? (
+          <p>No playlists yet.</p>
+        ) : (
+          <div className="playlists-list">
+            {playlists.map((playlist) => (
+              <div
+                className={`playlist-item ${
+                  selectedPlaylist?.id === playlist.id
+                    ? "playlist-active"
+                    : ""
+                }`}
+                key={playlist.id}
+              >
+                <button
+                  type="button"
+                  onClick={() => selectPlaylist(playlist)}
+                >
+                  {playlist.name}
+                </button>
+
+                <button
+                  type="button"
+                  className="playlist-delete"
+                  onClick={() => deletePlaylist(playlist.id)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {selectedPlaylist && (
+          <div className="selected-playlist">
+
+            <div className="selected-playlist-header">
+              <div>
+                <span className="search-eyebrow">
+                  SELECTED PLAYLIST
+                </span>
+
+                <h3>{selectedPlaylist.name}</h3>
+              </div>
+            </div>
+
+            {playlistSongs.length === 0 ? (
+              <p>No songs in this playlist yet.</p>
+            ) : (
+              <div className="playlist-song-list">
+                {playlistSongs.map((playlistSong) => {
+                  const song = songs.find(
+                    (item) => item.id === playlistSong.song_id
+                  );
+
+                  if (!song) return null;
+
+                  return (
+                    <div
+                      className="playlist-song"
+                      key={`${playlistSong.playlist_id}-${playlistSong.song_id}`}
+                    >
+                      <div>
+                        <strong>{song.title}</strong>
+                        <span>{song.artist}</span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          playSong(song)
+                        }
+                      >
+                        ▶
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          removeSongFromPlaylist(song.id)
+                        }
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+      </section>
+
+      {/* =================================================
           MUSIC AREA
           ================================================= */}
 
@@ -786,6 +1129,14 @@ function App() {
                           : isLiked
                             ? "Liked"
                             : "Like"}
+                      </button>
+
+                      <button
+                        className="playlist-button"
+                        onClick={() => addSongToPlaylist(song)}
+                        type="button"
+                      >
+                        + Playlist
                       </button>
                     </div>
                   </div>

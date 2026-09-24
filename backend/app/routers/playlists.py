@@ -21,7 +21,7 @@ def create_playlist(payload: PlaylistCreate, db: Session = Depends(get_db), user
     return playlist
 
 
-@router.get("", response_model=list[PlaylistSongOut])
+@router.get("", response_model=list[PlaylistOut])
 def show_playlist(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return (
         db.query(Playlist)
