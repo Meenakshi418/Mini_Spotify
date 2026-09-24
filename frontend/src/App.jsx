@@ -32,6 +32,14 @@ function App() {
 
   const searchInputRef = useRef(null);
 
+  const youtubePlayerRef = useRef(null);
+  const youtubeContainerRef = useRef(null);
+
+  const [youtubeAPIReady, setYoutubeAPIReady] = useState(false);
+  const [youtubePlaying, setYoutubePlaying] = useState(false);
+
+  const [youtubeProgress, setYoutubeProgress] = useState(0);
+
   /* =====================================================
      LOAD SONGS
      ===================================================== */
@@ -63,6 +71,26 @@ function App() {
     } finally {
       setLoading(false);
       setIsSearching(false);
+    }
+  }
+
+  /* =================================================
+    LOAD LIKED SONGS
+    ================================================= */
+
+  async function loadLikedSongs() {
+    if (!token) return;
+
+    try {
+      const res = await axios.get(`${API}/api/songs/liked`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      setLikedSongs(res.data);
+    } catch (err) {
+      console.error("Liked songs loading error:", err);
     }
   }
 
@@ -288,6 +316,127 @@ function App() {
     }
   }
 
+  /* =================================================
+    YOUTUBE IFRAME API
+    ================================================= */
+
+  useEffect(() => {
+    if (window.YT?.Player) {
+      setYoutubeAPIReady(true);
+      return;
+    }
+
+    const existingScript = document.getElementById("youtube-iframe-api");
+
+    if (existingScript) {
+      window.onYouTubeIframeAPIReady = () => {
+        setYoutubeAPIReady(true);
+      };
+      return;
+    }
+
+    const script = document.createElement("script");
+
+    script.id = "youtube-iframe-api";
+    script.src = "https://www.youtube.com/iframe_api";
+
+    window.onYouTubeIframeAPIReady = () => {
+      setYoutubeAPIReady(true);
+    };
+
+    document.body.appendChild(script);
+  }, []);
+
+  /* =================================================
+    CREATE YOUTUBE PLAYER
+    ================================================= */
+
+  useEffect(() => {
+    if (
+      !selected?.youtube_video_id ||
+      !youtubeAPIReady ||
+      !youtubeContainerRef.current
+    ) {
+      return;
+    }
+
+    if (youtubePlayerRef.current) {
+      youtubePlayerRef.current.destroy();
+      youtubePlayerRef.current = null;
+    }
+
+    youtubePlayerRef.current = new window.YT.Player(
+      youtubeContainerRef.current,
+      {
+        videoId: selected.youtube_video_id,
+
+        playerVars: {
+          autoplay: 1,
+          controls: 1,
+          playsinline: 1,
+          rel: 0,
+          origin: window.location.origin,
+        },
+
+        events: {
+          onReady: (event) => {
+            event.target.playVideo();
+          },
+
+          onStateChange: (event) => {
+            if (event.data === window.YT.PlayerState.PLAYING) {
+              setYoutubePlaying(true);
+            }
+
+            if (
+              event.data === window.YT.PlayerState.PAUSED ||
+              event.data === window.YT.PlayerState.ENDED
+            ) {
+              setYoutubePlaying(false);
+            }
+          },
+        },
+      }
+    );
+
+    return () => {
+      if (youtubePlayerRef.current) {
+        youtubePlayerRef.current.destroy();
+        youtubePlayerRef.current = null;
+      }
+    };
+  }, [selected?.youtube_video_id, youtubeAPIReady]);
+
+  /* =================================================
+    YOUTUBE PROGRESS
+    ================================================= */
+
+  useEffect(() => {
+    if (!selected?.youtube_video_id || !youtubeAPIReady) {
+      setYoutubeProgress(0);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      const player = youtubePlayerRef.current;
+
+      if (!player?.getCurrentTime || !player?.getDuration) {
+        return;
+      }
+
+      const duration = player.getDuration();
+
+      if (duration > 0) {
+        const currentTime = player.getCurrentTime();
+        const progress = (currentTime / duration) * 100;
+
+        setYoutubeProgress(Math.min(Math.max(progress, 0), 100));
+      }
+    }, 500);
+
+    return () => clearInterval(timer);
+  }, [selected?.youtube_video_id, youtubeAPIReady]);
+
   /* =====================================================
      INITIAL LOAD
      ===================================================== */
@@ -299,6 +448,7 @@ function App() {
   useEffect(() => {
     if (token) {
       loadPlaylists();
+      loadLikedSongs();
     }
   }, [token]);
   /* =====================================================
@@ -387,13 +537,12 @@ function App() {
   }
 
   /* =====================================================
-     LIKE SONG
-     ===================================================== */
+    LIKE / UNLIKE SONG
+    ===================================================== */
 
   async function likeSong(song) {
     if (!token) {
       setStatus("Please click Demo Login first");
-
       return;
     }
 
@@ -401,32 +550,46 @@ function App() {
       return;
     }
 
-    if (likedSongs.includes(song.id)) {
-      setStatus(`"${song.title}" is already liked`);
-
-      return;
-    }
-
     try {
       setLikingId(song.id);
 
-      await axios.post(
-        `${API}/api/songs/${song.id}/like`,
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
+      if (likedSongs.includes(song.id)) {
+        await axios.delete(
+          `${API}/api/songs/${song.id}/like`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
           },
-        },
-      );
+        );
 
-      setLikedSongs((prev) => [...prev, song.id]);
+        setLikedSongs((prev) =>
+          prev.filter((id) => id !== song.id)
+        );
 
-      setStatus(`♥ Added "${song.title}" to your likes`);
+        setStatus(`♡ Removed "${song.title}" from your likes`);
+      } else {
+        await axios.post(
+          `${API}/api/songs/${song.id}/like`,
+          {},
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        );
+
+        setLikedSongs((prev) => [...prev, song.id]);
+
+        setStatus(`♥ Added "${song.title}" to your likes`);
+      }
     } catch (err) {
-      console.error("Like error:", err);
+      console.error("Like/unlike error:", err);
 
-      setStatus("Unable to like this song.");
+      setStatus(
+        err.response?.data?.detail ||
+        "Unable to update like"
+      );
     } finally {
       setLikingId(null);
     }
@@ -468,6 +631,24 @@ function App() {
     recordPlay(song);
 
     setStatus(`▶ Now playing "${song.title}"`);
+  }
+
+  /* =================================================
+    TOGGLE YOUTUBE PLAYBACK
+    ================================================= */
+
+  function toggleYouTubePlayback() {
+    const player = youtubePlayerRef.current;
+
+    if (!player) return;
+
+    const state = player.getPlayerState();
+
+    if (state === window.YT.PlayerState.PLAYING) {
+      player.pauseVideo();
+    } else {
+      player.playVideo();
+    }
   }
 
   /* =====================================================
@@ -558,29 +739,49 @@ function App() {
   }, [songs, selected]);
 
   /* =====================================================
-     NEXT SONG
-     ===================================================== */
+    NEXT SONG
+    ===================================================== */
 
   function playNextSong() {
     if (!songs.length) return;
 
     const nextIndex =
-      activeSongIndex >= 0 ? (activeSongIndex + 1) % songs.length : 0;
+      activeSongIndex >= 0
+        ? (activeSongIndex + 1) % songs.length
+        : 0;
 
-    playSong(songs[nextIndex]);
+    const nextSong = songs[nextIndex];
+
+    setSelected(nextSong);
+    setYoutubePlaying(false);
+    setYoutubeProgress(0);
+
+    recordPlay(nextSong);
+
+    setStatus(`▶ Now playing "${nextSong.title}"`);
   }
 
   /* =====================================================
-     PREVIOUS SONG
-     ===================================================== */
+    PREVIOUS SONG
+    ===================================================== */
 
   function playPreviousSong() {
     if (!songs.length) return;
 
     const previousIndex =
-      activeSongIndex > 0 ? activeSongIndex - 1 : songs.length - 1;
+      activeSongIndex > 0
+        ? activeSongIndex - 1
+        : songs.length - 1;
 
-    playSong(songs[previousIndex]);
+    const previousSong = songs[previousIndex];
+
+    setSelected(previousSong);
+    setYoutubePlaying(false);
+    setYoutubeProgress(0);
+
+    recordPlay(previousSong);
+
+    setStatus(`▶ Now playing "${previousSong.title}"`);
   }
 
   /* =====================================================
@@ -1211,10 +1412,10 @@ function App() {
             <button
               type="button"
               className="player-main-button"
-              onClick={() => playSong(selected)}
-              aria-label="Play current song"
+              onClick={toggleYouTubePlayback}
+              aria-label={youtubePlaying ? "Pause current song" : "Play current song"}
             >
-              ▶
+              {youtubePlaying ? "Ⅱ" : "▶"}
             </button>
 
             <button
@@ -1234,11 +1435,9 @@ function App() {
 
           <div className="player-content">
             {selected.youtube_video_id ? (
-              <iframe
-                src={`https://www.youtube.com/embed/${selected.youtube_video_id}`}
-                title={`Playing ${selected.title}`}
-                allow="autoplay; encrypted-media; picture-in-picture"
-                allowFullScreen
+              <div
+                ref={youtubeContainerRef}
+                className="youtube-player"
               />
             ) : (
               <div className="placeholder">
@@ -1261,7 +1460,11 @@ function App() {
 
           <div className="player-footer">
             <div className="player-progress">
-              <span />
+              <span
+                style={{
+                  width: `${youtubeProgress}%`,
+                }}
+              />
             </div>
 
             <div className="player-footer-info">

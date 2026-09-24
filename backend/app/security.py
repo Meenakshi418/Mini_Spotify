@@ -8,6 +8,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 class Settings(BaseSettings):
     JWT_SECRET: str = "change-me-before-deployment"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    youtube_api_key: str | None = None
     class Config:
         env_file = ".env"
 
