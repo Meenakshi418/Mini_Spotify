@@ -22,4 +22,5 @@ Thumbs.db
 
 data/raw/*.csv
 data/processed/*.csv
+!data/raw/tracks.csv
 *.db
