@@ -16,6 +16,10 @@ function App() {
 
   const [likedSongs, setLikedSongs] = useState([]);
 
+  const [playlists, setPlaylists] = useState([]);
+  const [selectedPlaylist, setSelectedPlaylist] = useState(null);
+  const [playlistSongs, setPlaylistSongs] = useState([]);
+
   const [loading, setLoading] = useState(true);
   const [loggingIn, setLoggingIn] = useState(false);
   const [likingId, setLikingId] = useState(null);
@@ -27,6 +31,14 @@ function App() {
   const [showStats, setShowStats] = useState(false);
 
   const searchInputRef = useRef(null);
+
+  const youtubePlayerRef = useRef(null);
+  const youtubeContainerRef = useRef(null);
+
+  const [youtubeAPIReady, setYoutubeAPIReady] = useState(false);
+  const [youtubePlaying, setYoutubePlaying] = useState(false);
+
+  const [youtubeProgress, setYoutubeProgress] = useState(0);
 
   /* =====================================================
      LOAD SONGS
@@ -62,6 +74,369 @@ function App() {
     }
   }
 
+  /* =================================================
+    LOAD LIKED SONGS
+    ================================================= */
+
+  async function loadLikedSongs() {
+    if (!token) return;
+
+    try {
+      const res = await axios.get(`${API}/api/songs/liked`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      setLikedSongs(res.data);
+    } catch (err) {
+      console.error("Liked songs loading error:", err);
+    }
+  }
+
+  /* LOAD PLAYLISTS */
+
+  async function loadPlaylists() {
+    if (!token) return;
+
+    try {
+      const res = await axios.get(`${API}/api/playlists`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      setPlaylists(res.data);
+    } catch (err) {
+      console.error("Playlist loading error:", err);
+    }
+  }
+
+    /* =================================================
+      CREATE PLAYLIST
+      ================================================= */
+
+  async function createPlaylist() {
+    if (!token) {
+      setStatus("Please log in first");
+      return;
+    }
+
+    const name = window.prompt("Enter playlist name:");
+
+    if (!name?.trim()) return;
+
+    try {
+      await axios.post(
+        `${API}/api/playlists`,
+        { name: name.trim() },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      await loadPlaylists();
+      setStatus("Playlist created");
+    } catch (err) {
+      console.error("Playlist creation error:", err);
+      setStatus("Unable to create playlist");
+    }
+  }
+
+  /* =================================================
+    LOAD PLAYLIST SONGS
+    ================================================= */
+
+  async function loadPlaylistSongs(playlistId) {
+    if (!token) return;
+
+    try {
+      const res = await axios.get(
+        `${API}/api/playlists/${playlistId}/songs`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      setPlaylistSongs(res.data);
+    } catch (err) {
+      console.error("Playlist songs loading error:", err);
+      setPlaylistSongs([]);
+    }
+  }
+
+  /* =================================================
+    SELECT PLAYLIST
+    ================================================= */
+
+  async function selectPlaylist(playlist) {
+    setSelectedPlaylist(playlist);
+    await loadPlaylistSongs(playlist.id);
+  }
+
+ /* =================================================
+    ADD SONG TO PLAYLIST
+    ================================================= */
+
+  async function addSongToPlaylist(song) {
+    if (!token) {
+      setStatus("Please log in first");
+      return;
+    }
+
+    if (playlists.length === 0) {
+      setStatus("Create a playlist first");
+      return;
+    }
+
+    const playlistChoices = playlists
+      .map((playlist, index) => `${index + 1}. ${playlist.name}`)
+      .join("\n");
+
+    const choice = window.prompt(
+      `Add "${song.title}" to which playlist?\n\n${playlistChoices}\n\nEnter number:`
+    );
+
+    if (choice === null) {
+      setStatus("Add cancelled");
+      return;
+    }
+
+    const index = Number(choice) - 1;
+
+    if (
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index >= playlists.length
+    ) {
+      setStatus("Invalid playlist number");
+      return;
+    }
+
+    const playlist = playlists[index];
+
+    setStatus(`Adding "${song.title}"...`);
+
+    try {
+      const res = await axios.post(
+        `${API}/api/playlists/${playlist.id}/songs`,
+        {
+          song_id: song.id,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      console.log("Add response:", res.data);
+
+      setStatus(`✓ Added "${song.title}" to "${playlist.name}"`);
+
+      if (selectedPlaylist?.id === playlist.id) {
+        await loadPlaylistSongs(playlist.id);
+      }
+    } catch (err) {
+      console.error("Add to playlist error:", err);
+      console.error("Backend response:", err.response?.data);
+
+      setStatus(
+        err.response?.data?.detail ||
+        "Could not add song to playlist"
+      );
+    }
+  }
+
+  /* =================================================
+    REMOVE SONG FROM PLAYLIST
+    ================================================= */
+
+  async function removeSongFromPlaylist(songId) {
+    if (!selectedPlaylist) return;
+
+    try {
+      await axios.delete(
+        `${API}/api/playlists/${selectedPlaylist.id}/songs/${songId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      await loadPlaylistSongs(selectedPlaylist.id);
+      setStatus("Song removed from playlist");
+    } catch (err) {
+      console.error("Remove playlist song error:", err);
+      setStatus("Unable to remove song");
+    }
+  }
+
+  /* =================================================
+    DELETE PLAYLIST
+    ================================================= */
+
+  async function deletePlaylist(playlistId) {
+    if (!token) return;
+
+    const playlist = playlists.find(
+      (item) => item.id === playlistId
+    );
+
+    if (!playlist) return;
+
+    const confirmed = window.confirm(
+      `Delete playlist "${playlist.name}"?`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      await axios.delete(`${API}/api/playlists/${playlistId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (selectedPlaylist?.id === playlistId) {
+        setSelectedPlaylist(null);
+        setPlaylistSongs([]);
+      }
+
+      await loadPlaylists();
+      setStatus("Playlist deleted");
+    } catch (err) {
+      console.error("Delete playlist error:", err);
+      setStatus("Unable to delete playlist");
+    }
+  }
+
+  /* =================================================
+    YOUTUBE IFRAME API
+    ================================================= */
+
+  useEffect(() => {
+    if (window.YT?.Player) {
+      setYoutubeAPIReady(true);
+      return;
+    }
+
+    const existingScript = document.getElementById("youtube-iframe-api");
+
+    if (existingScript) {
+      window.onYouTubeIframeAPIReady = () => {
+        setYoutubeAPIReady(true);
+      };
+      return;
+    }
+
+    const script = document.createElement("script");
+
+    script.id = "youtube-iframe-api";
+    script.src = "https://www.youtube.com/iframe_api";
+
+    window.onYouTubeIframeAPIReady = () => {
+      setYoutubeAPIReady(true);
+    };
+
+    document.body.appendChild(script);
+  }, []);
+
+  /* =================================================
+    CREATE YOUTUBE PLAYER
+    ================================================= */
+
+  useEffect(() => {
+    if (
+      !selected?.youtube_video_id ||
+      !youtubeAPIReady ||
+      !youtubeContainerRef.current
+    ) {
+      return;
+    }
+
+    if (youtubePlayerRef.current) {
+      youtubePlayerRef.current.destroy();
+      youtubePlayerRef.current = null;
+    }
+
+    youtubePlayerRef.current = new window.YT.Player(
+      youtubeContainerRef.current,
+      {
+        videoId: selected.youtube_video_id,
+
+        playerVars: {
+          autoplay: 1,
+          controls: 1,
+          playsinline: 1,
+          rel: 0,
+          origin: window.location.origin,
+        },
+
+        events: {
+          onReady: (event) => {
+            event.target.playVideo();
+          },
+
+          onStateChange: (event) => {
+            if (event.data === window.YT.PlayerState.PLAYING) {
+              setYoutubePlaying(true);
+            }
+
+            if (
+              event.data === window.YT.PlayerState.PAUSED ||
+              event.data === window.YT.PlayerState.ENDED
+            ) {
+              setYoutubePlaying(false);
+            }
+          },
+        },
+      }
+    );
+
+    return () => {
+      if (youtubePlayerRef.current) {
+        youtubePlayerRef.current.destroy();
+        youtubePlayerRef.current = null;
+      }
+    };
+  }, [selected?.youtube_video_id, youtubeAPIReady]);
+
+  /* =================================================
+    YOUTUBE PROGRESS
+    ================================================= */
+
+  useEffect(() => {
+    if (!selected?.youtube_video_id || !youtubeAPIReady) {
+      setYoutubeProgress(0);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      const player = youtubePlayerRef.current;
+
+      if (!player?.getCurrentTime || !player?.getDuration) {
+        return;
+      }
+
+      const duration = player.getDuration();
+
+      if (duration > 0) {
+        const currentTime = player.getCurrentTime();
+        const progress = (currentTime / duration) * 100;
+
+        setYoutubeProgress(Math.min(Math.max(progress, 0), 100));
+      }
+    }, 500);
+
+    return () => clearInterval(timer);
+  }, [selected?.youtube_video_id, youtubeAPIReady]);
+
   /* =====================================================
      INITIAL LOAD
      ===================================================== */
@@ -70,6 +445,12 @@ function App() {
     loadSongs();
   }, []);
 
+  useEffect(() => {
+    if (token) {
+      loadPlaylists();
+      loadLikedSongs();
+    }
+  }, [token]);
   /* =====================================================
      STATUS AUTO HIDE
      ===================================================== */
@@ -156,13 +537,12 @@ function App() {
   }
 
   /* =====================================================
-     LIKE SONG
-     ===================================================== */
+    LIKE / UNLIKE SONG
+    ===================================================== */
 
   async function likeSong(song) {
     if (!token) {
       setStatus("Please click Demo Login first");
-
       return;
     }
 
@@ -170,32 +550,46 @@ function App() {
       return;
     }
 
-    if (likedSongs.includes(song.id)) {
-      setStatus(`"${song.title}" is already liked`);
-
-      return;
-    }
-
     try {
       setLikingId(song.id);
 
-      await axios.post(
-        `${API}/api/songs/${song.id}/like`,
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
+      if (likedSongs.includes(song.id)) {
+        await axios.delete(
+          `${API}/api/songs/${song.id}/like`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
           },
-        },
-      );
+        );
 
-      setLikedSongs((prev) => [...prev, song.id]);
+        setLikedSongs((prev) =>
+          prev.filter((id) => id !== song.id)
+        );
 
-      setStatus(`♥ Added "${song.title}" to your likes`);
+        setStatus(`♡ Removed "${song.title}" from your likes`);
+      } else {
+        await axios.post(
+          `${API}/api/songs/${song.id}/like`,
+          {},
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        );
+
+        setLikedSongs((prev) => [...prev, song.id]);
+
+        setStatus(`♥ Added "${song.title}" to your likes`);
+      }
     } catch (err) {
-      console.error("Like error:", err);
+      console.error("Like/unlike error:", err);
 
-      setStatus("Unable to like this song.");
+      setStatus(
+        err.response?.data?.detail ||
+        "Unable to update like"
+      );
     } finally {
       setLikingId(null);
     }
@@ -237,6 +631,24 @@ function App() {
     recordPlay(song);
 
     setStatus(`▶ Now playing "${song.title}"`);
+  }
+
+  /* =================================================
+    TOGGLE YOUTUBE PLAYBACK
+    ================================================= */
+
+  function toggleYouTubePlayback() {
+    const player = youtubePlayerRef.current;
+
+    if (!player) return;
+
+    const state = player.getPlayerState();
+
+    if (state === window.YT.PlayerState.PLAYING) {
+      player.pauseVideo();
+    } else {
+      player.playVideo();
+    }
   }
 
   /* =====================================================
@@ -327,29 +739,49 @@ function App() {
   }, [songs, selected]);
 
   /* =====================================================
-     NEXT SONG
-     ===================================================== */
+    NEXT SONG
+    ===================================================== */
 
   function playNextSong() {
     if (!songs.length) return;
 
     const nextIndex =
-      activeSongIndex >= 0 ? (activeSongIndex + 1) % songs.length : 0;
+      activeSongIndex >= 0
+        ? (activeSongIndex + 1) % songs.length
+        : 0;
 
-    playSong(songs[nextIndex]);
+    const nextSong = songs[nextIndex];
+
+    setSelected(nextSong);
+    setYoutubePlaying(false);
+    setYoutubeProgress(0);
+
+    recordPlay(nextSong);
+
+    setStatus(`▶ Now playing "${nextSong.title}"`);
   }
 
   /* =====================================================
-     PREVIOUS SONG
-     ===================================================== */
+    PREVIOUS SONG
+    ===================================================== */
 
   function playPreviousSong() {
     if (!songs.length) return;
 
     const previousIndex =
-      activeSongIndex > 0 ? activeSongIndex - 1 : songs.length - 1;
+      activeSongIndex > 0
+        ? activeSongIndex - 1
+        : songs.length - 1;
 
-    playSong(songs[previousIndex]);
+    const previousSong = songs[previousIndex];
+
+    setSelected(previousSong);
+    setYoutubePlaying(false);
+    setYoutubeProgress(0);
+
+    recordPlay(previousSong);
+
+    setStatus(`▶ Now playing "${previousSong.title}"`);
   }
 
   /* =====================================================
@@ -595,6 +1027,118 @@ function App() {
       )}
 
       {/* =================================================
+          PLAYLISTS
+          ================================================= */}
+
+      <section className="playlists-section">
+
+        <div className="search-heading-row">
+          <div>
+            <span className="search-eyebrow">YOUR PLAYLISTS</span>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={createPlaylist}
+        >
+          + Create Playlist
+        </button>
+
+        {playlists.length === 0 ? (
+          <p>No playlists yet.</p>
+        ) : (
+          <div className="playlists-list">
+            {playlists.map((playlist) => (
+              <div
+                className={`playlist-item ${
+                  selectedPlaylist?.id === playlist.id
+                    ? "playlist-active"
+                    : ""
+                }`}
+                key={playlist.id}
+              >
+                <button
+                  type="button"
+                  onClick={() => selectPlaylist(playlist)}
+                >
+                  {playlist.name}
+                </button>
+
+                <button
+                  type="button"
+                  className="playlist-delete"
+                  onClick={() => deletePlaylist(playlist.id)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {selectedPlaylist && (
+          <div className="selected-playlist">
+
+            <div className="selected-playlist-header">
+              <div>
+                <span className="search-eyebrow">
+                  SELECTED PLAYLIST
+                </span>
+
+                <h3>{selectedPlaylist.name}</h3>
+              </div>
+            </div>
+
+            {playlistSongs.length === 0 ? (
+              <p>No songs in this playlist yet.</p>
+            ) : (
+              <div className="playlist-song-list">
+                {playlistSongs.map((playlistSong) => {
+                  const song = songs.find(
+                    (item) => item.id === playlistSong.song_id
+                  );
+
+                  if (!song) return null;
+
+                  return (
+                    <div
+                      className="playlist-song"
+                      key={`${playlistSong.playlist_id}-${playlistSong.song_id}`}
+                    >
+                      <div>
+                        <strong>{song.title}</strong>
+                        <span>{song.artist}</span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          playSong(song)
+                        }
+                      >
+                        ▶
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          removeSongFromPlaylist(song.id)
+                        }
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+      </section>
+
+      {/* =================================================
           MUSIC AREA
           ================================================= */}
 
@@ -787,6 +1331,14 @@ function App() {
                             ? "Liked"
                             : "Like"}
                       </button>
+
+                      <button
+                        className="playlist-button"
+                        onClick={() => addSongToPlaylist(song)}
+                        type="button"
+                      >
+                        + Playlist
+                      </button>
                     </div>
                   </div>
                 </article>
@@ -860,10 +1412,10 @@ function App() {
             <button
               type="button"
               className="player-main-button"
-              onClick={() => playSong(selected)}
-              aria-label="Play current song"
+              onClick={toggleYouTubePlayback}
+              aria-label={youtubePlaying ? "Pause current song" : "Play current song"}
             >
-              ▶
+              {youtubePlaying ? "Ⅱ" : "▶"}
             </button>
 
             <button
@@ -883,11 +1435,9 @@ function App() {
 
           <div className="player-content">
             {selected.youtube_video_id ? (
-              <iframe
-                src={`https://www.youtube.com/embed/${selected.youtube_video_id}`}
-                title={`Playing ${selected.title}`}
-                allow="autoplay; encrypted-media; picture-in-picture"
-                allowFullScreen
+              <div
+                ref={youtubeContainerRef}
+                className="youtube-player"
               />
             ) : (
               <div className="placeholder">
@@ -910,7 +1460,11 @@ function App() {
 
           <div className="player-footer">
             <div className="player-progress">
-              <span />
+              <span
+                style={{
+                  width: `${youtubeProgress}%`,
+                }}
+              />
             </div>
 
             <div className="player-footer-info">
