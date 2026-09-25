@@ -1,16 +1,17 @@
-# Apriori Analysis
+# Apriori Song Association Analysis
 
 ## Method
-Each user's listening history is treated as one transaction. The items are the unique genres listened to by that user.
+Each user's listening history is treated as one transaction. The items are unique songs listened to by that user.
 
-- Activity records: 11838
-- Users: 199
-- Transactions used: 199
-- Minimum support: 0.1
-- Minimum confidence: 0.5
+- Activity records: 1261
+- Users found: 175
+- Songs selected: 100
+- Transactions used: 131
+- Minimum support: 0.01
+- Minimum confidence: 0.2
 
-- Frequent itemsets found: 5996
-- Association rules found: 33636
+- Frequent itemsets found: 1115
+- Association rules found: 1796
 
 ## Interpretation
-Frequent itemsets show genres that commonly occur together in users' listening activity. Association rules show directional relationships between genre combinations using confidence and lift.
+Frequent itemsets represent songs commonly listened to by the same users. Association rules describe directional relationships between song combinations using support, confidence, and lift.

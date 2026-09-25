@@ -76,6 +76,36 @@ def main():
         conn,
     )
 
+    # 4. User listening patterns
+    user_listening_patterns = pd.read_sql_query(
+        """
+        SELECT
+            u.user_id,
+            u.user_name,
+            COUNT(*) AS total_plays,
+            ROUND(SUM(f.duration_played), 2) AS total_seconds,
+            ROUND(AVG(f.duration_played), 2) AS average_duration,
+            COUNT(DISTINCT f.song_key) AS unique_songs,
+            COUNT(DISTINCT f.genre_key) AS unique_genres,
+            SUM(CASE WHEN f.completed = 1 THEN 1 ELSE 0 END)
+                AS completed_plays,
+            SUM(CASE WHEN f.liked = 1 THEN 1 ELSE 0 END)
+                AS total_likes,
+            ROUND(
+                100.0 *
+                SUM(CASE WHEN f.completed = 1 THEN 1 ELSE 0 END)
+                / COUNT(*),
+                2
+            ) AS completion_rate
+        FROM fact_listening f
+        JOIN dim_user u
+            ON f.user_key = u.user_key
+        GROUP BY u.user_id, u.user_name
+        ORDER BY total_plays DESC
+        """,
+        conn,
+    )
+
     conn.close()
 
     # Save results
@@ -94,6 +124,11 @@ def main():
         index=False,
     )
 
+    user_listening_patterns.to_csv(
+        RESULTS_DIR / "user_listening_patterns.csv",
+        index=False,
+    )
+
     print("\n========== OLAP COMPLETE ==========")
 
     print("\nMost played songs:")
@@ -104,6 +139,11 @@ def main():
 
     print("\nGenre/month rows generated:")
     print(len(listening_by_genre_month))
+
+    print("\nUser listening patterns:")
+    print(
+        user_listening_patterns.head(10).to_string(index=False)
+    )
 
     print("\nResults saved to:")
     print(RESULTS_DIR)
