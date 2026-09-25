@@ -1,0 +1,3 @@
+Number of users: 199
+Number of clusters: 4
+Silhouette score: 0.1433
