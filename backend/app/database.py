@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./mini_spotify.db"
+    youtube_api_key: str | None = None
 
     class Config:
         env_file = ".env"

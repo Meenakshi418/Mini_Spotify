@@ -22,6 +22,19 @@ def search_songs(q: str = "", db: Session = Depends(get_db)):
         .all()
     )
 
+@router.get("/liked")
+def get_liked_songs(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)
+):
+    likes = (
+        db.query(Like)
+        .filter(Like.user_id == user.id)
+        .all()
+    )
+
+    return [like.song_id for like in likes]
+
 @router.get("/{song_id}", response_model=SongOut)
 def get_song(song_id: int, db: Session = Depends(get_db)):
     song = db.get(Song, song_id)

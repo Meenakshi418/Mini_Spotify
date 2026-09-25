@@ -35,3 +35,17 @@ class Like(Base):
     user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
     song_id = Column(Integer, ForeignKey("songs.id"), primary_key=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class Playlist(Base):
+    __tablename__="playlists"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(100), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class PlaylistSong(Base):
+    __tablename__="playlist_songs"
+    playlist_id = Column(Integer, ForeignKey("playlists.id"), primary_key=True, nullable=False, index=True)
+    song_id = Column(Integer, ForeignKey("songs.id"), primary_key=True, nullable=False, index=True)
+    position = Column(Integer, nullable=False, index=True)
+    

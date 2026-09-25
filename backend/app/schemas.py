@@ -23,3 +23,22 @@ class HistoryCreate(BaseModel):
     song_id: int
     duration_played: float
     completed: bool = False
+
+class PlaylistCreate(BaseModel):
+    name: str
+
+class PlaylistOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)     
+    id: int     
+    name: str     
+    user_id: int
+
+class PlaylistSongInsert(BaseModel):
+    song_id: int
+
+class PlaylistSongOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    position: int
+    playlist_id: int
+    song_id: int
