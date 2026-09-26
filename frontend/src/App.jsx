@@ -59,6 +59,8 @@ function App() {
 
       const incomingSongs = Array.isArray(res.data) ? res.data : [];
 
+      console.log("SONGS FROM API:", incomingSongs.slice(0, 10));
+
       setSongs(incomingSongs);
     } catch (err) {
       console.error("Song loading error:", err);
