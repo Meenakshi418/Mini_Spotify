@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     JWT_SECRET: str = "change-me-before-deployment"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     youtube_api_key: str | None = None
+    database_url: str | None = None
     class Config:
         env_file = ".env"
 
