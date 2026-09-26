@@ -3,53 +3,11 @@ import axios from "axios";
 
 const API = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
-const PAGE_SIZE = 30;
-const MAX_LIBRARY_LIMIT = 100;
-const PLAYLIST_ENDPOINT = `${API}/api/playlists`;
-
-const adminStats = {
-  users: 1248,
-  songs: 106573,
-  plays: 24891,
-  likes: 8426,
-};
-
-const topSongs = [
-  ["Demo Pop One", "Demo Artist A", "3,842"],
-  ["Demo Pop Two", "Demo Artist B", "3,421"],
-  ["Demo Rock One", "Demo Artist C", "2,987"],
-  ["Demo Rock Two", "Demo Artist D", "2,614"],
-  ["Demo Hip Hop One", "Demo Artist E", "2,105"],
-];
-
-const topArtists = [
-  ["Demo Artist A", "8,420"],
-  ["Demo Artist B", "7,914"],
-  ["Demo Artist C", "6,842"],
-  ["Demo Artist D", "5,931"],
-  ["Demo Artist E", "4,816"],
-];
-
-const genres = [
-  ["Pop", 34],
-  ["Rock", 24],
-  ["Hip-Hop", 18],
-  ["Indie", 12],
-  ["Electronic", 7],
-  ["Other", 5],
-];
-
-const trends = [
-  ["Mon", 42],
-  ["Tue", 58],
-  ["Wed", 51],
-  ["Thu", 72],
-  ["Fri", 84],
-  ["Sat", 96],
-  ["Sun", 68],
-];
-
 function App() {
+  /* =====================================================
+     CORE STATE
+     ===================================================== */
+
   const [songs, setSongs] = useState([]);
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState(null);
@@ -57,182 +15,471 @@ function App() {
   const [token, setToken] = useState(localStorage.getItem("token") || "");
 
   const [likedSongs, setLikedSongs] = useState([]);
+
+  const [playlists, setPlaylists] = useState([]);
+  const [selectedPlaylist, setSelectedPlaylist] = useState(null);
+  const [playlistSongs, setPlaylistSongs] = useState([]);
+
+  const [youtubeAPIReady, setYoutubeAPIReady] = useState(false);
+  const [youtubePlaying, setYoutubePlaying] = useState(false);
+  const [youtubeProgress, setYoutubeProgress] = useState(0);
+
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [loggingIn, setLoggingIn] = useState(false);
   const [likingId, setLikingId] = useState(null);
 
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
-  const [searching, setSearching] = useState(false);
 
-  const [showDashboard, setShowDashboard] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
   const [showStats, setShowStats] = useState(false);
 
-  const [libraryLimit, setLibraryLimit] = useState(PAGE_SIZE);
-  const [hasMoreSongs, setHasMoreSongs] = useState(true);
+  const searchInputRef = useRef(null);
+  const youtubePlayerRef = useRef(null);
+  const youtubeContainerRef = useRef(null);
 
-  const [playlists, setPlaylists] = useState([]);
-  const [selectedPlaylist, setSelectedPlaylist] = useState(null);
-  const [loadingPlaylists, setLoadingPlaylists] = useState(false);
-  const [playlistError, setPlaylistError] = useState("");
-  const [playlistStatus, setPlaylistStatus] = useState("");
+  /* =====================================================
+     LOAD SONGS
+     ===================================================== */
 
-  const [playlistSong, setPlaylistSong] = useState(null);
-  const [showPlaylistModal, setShowPlaylistModal] = useState(false);
-  const [selectedPlaylistId, setSelectedPlaylistId] = useState("");
-  const [addingToPlaylist, setAddingToPlaylist] = useState(false);
-  const [removingFromPlaylist, setRemovingFromPlaylist] = useState(null);
-
-  const searchRef = useRef(null);
-
-  const totalSongs = songs.length;
-  const totalLiked = likedSongs.length;
-
-  const genreCount = useMemo(
-    () => new Set(songs.map((s) => s.genre).filter(Boolean)).size,
-    [songs],
-  );
-
-  const averagePopularity = useMemo(() => {
-    if (!songs.length) return 0;
-    return Math.round(
-      songs.reduce(
-        (sum, s) => sum + Math.min(Math.max(Number(s.popularity) || 0, 0), 100),
-        0,
-      ) / songs.length,
-    );
-  }, [songs]);
-
-  const activeIndex = selected
-    ? songs.findIndex((song) => song.id === selected.id)
-    : -1;
-
-  /* -----------------------------------------------------
-     SONGS
-     ----------------------------------------------------- */
-
-  async function loadSongs(search = "", limit = PAGE_SIZE) {
+  async function loadSongs(search = "") {
     try {
       setLoading(true);
       setError("");
 
-      const clean = search.trim();
+      const cleanSearch = search.trim();
 
-      if (clean) {
-        const res = await axios.get(
-          `${API}/api/songs/search?q=${encodeURIComponent(clean)}`,
-        );
+      const url = cleanSearch
+        ? `${API}/api/songs/search?q=${encodeURIComponent(cleanSearch)}`
+        : `${API}/api/songs`;
 
-        setSongs(Array.isArray(res.data) ? res.data : []);
-        setHasMoreSongs(false);
-      } else {
-        const res = await axios.get(`${API}/api/songs`, {
-          params: { limit },
-        });
+      const res = await axios.get(url);
 
-        const data = Array.isArray(res.data) ? res.data : [];
+      const incomingSongs = Array.isArray(res.data) ? res.data : [];
 
-        setSongs(data);
-        setLibraryLimit(limit);
-
-        setHasMoreSongs(data.length >= limit && limit < MAX_LIBRARY_LIMIT);
-      }
+      setSongs(incomingSongs);
     } catch (err) {
-      console.error(err);
+      console.error("Song loading error:", err);
+
       setSongs([]);
-      setHasMoreSongs(false);
+
       setError(
         "Unable to load songs. Please make sure the backend is running.",
       );
     } finally {
       setLoading(false);
-      setSearching(false);
+      setIsSearching(false);
     }
   }
 
-  async function loadMoreSongs() {
-    if (loadingMore || q.trim()) return;
+  /* =================================================
+     LOAD PLAYLISTS
+     ================================================= */
+
+  async function loadPlaylists() {
+    if (!token) return;
 
     try {
-      setLoadingMore(true);
-      setError("");
-
-      const nextLimit = Math.min(libraryLimit + PAGE_SIZE, MAX_LIBRARY_LIMIT);
-
-      const res = await axios.get(`${API}/api/songs`, {
-        params: { limit: nextLimit },
+      const res = await axios.get(`${API}/api/playlists`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       });
 
-      const data = Array.isArray(res.data) ? res.data : [];
-      const previousCount = songs.length;
-
-      setSongs(data);
-      setLibraryLimit(nextLimit);
-
-      const increased = data.length > previousCount;
-      const apiMayHaveMore =
-        data.length >= nextLimit && nextLimit < MAX_LIBRARY_LIMIT;
-
-      setHasMoreSongs(apiMayHaveMore);
-
-      if (!increased) {
-        setHasMoreSongs(false);
-        setStatus(`All ${data.length} currently available songs are loaded.`);
-      } else {
-        setStatus(`Loaded ${data.length} songs.`);
-      }
+      setPlaylists(res.data);
     } catch (err) {
-      console.error(err);
-      setError("Unable to load more songs. Please try again.");
-    } finally {
-      setLoadingMore(false);
+      console.error("Playlist loading error:", err);
     }
   }
+
+  /* =================================================
+     CREATE PLAYLIST
+     ================================================= */
+
+  async function createPlaylist() {
+    if (!token) {
+      setStatus("Please log in first");
+      return;
+    }
+
+    const name = window.prompt("Enter playlist name:");
+
+    if (!name?.trim()) return;
+
+    try {
+      await axios.post(
+        `${API}/api/playlists`,
+        { name: name.trim() },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+
+      await loadPlaylists();
+      setStatus("Playlist created");
+    } catch (err) {
+      console.error("Playlist creation error:", err);
+      setStatus("Unable to create playlist");
+    }
+  }
+
+  /* =================================================
+     LOAD PLAYLIST SONGS
+     ================================================= */
+
+  async function loadPlaylistSongs(playlistId) {
+    if (!token) return;
+
+    try {
+      const res = await axios.get(
+        `${API}/api/playlists/${playlistId}/songs`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+
+      setPlaylistSongs(res.data);
+    } catch (err) {
+      console.error("Playlist songs loading error:", err);
+      setPlaylistSongs([]);
+    }
+  }
+
+  /* =================================================
+     SELECT PLAYLIST
+     ================================================= */
+
+  async function selectPlaylist(playlist) {
+    setSelectedPlaylist(playlist);
+    await loadPlaylistSongs(playlist.id);
+  }
+
+  /* =================================================
+     ADD SONG TO PLAYLIST
+     ================================================= */
+
+  async function addSongToPlaylist(song) {
+    if (!token) {
+      setStatus("Please log in first");
+      return;
+    }
+
+    if (playlists.length === 0) {
+      setStatus("Create a playlist first");
+      return;
+    }
+
+    const playlistChoices = playlists
+      .map((playlist, index) => `${index + 1}. ${playlist.name}`)
+      .join("\n");
+
+    const choice = window.prompt(
+      `Add "${song.title}" to which playlist?\n\n${playlistChoices}\n\nEnter number:`
+    );
+
+    if (choice === null) {
+      setStatus("Add cancelled");
+      return;
+    }
+
+    const index = Number(choice) - 1;
+
+    if (
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index >= playlists.length
+    ) {
+      setStatus("Invalid playlist number");
+      return;
+    }
+
+    const playlist = playlists[index];
+
+    setStatus(`Adding "${song.title}"...`);
+
+    try {
+      const res = await axios.post(
+        `${API}/api/playlists/${playlist.id}/songs`,
+        {
+          song_id: song.id,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+
+      console.log("Add response:", res.data);
+
+      setStatus(`✓ Added "${song.title}" to "${playlist.name}"`);
+
+      if (selectedPlaylist?.id === playlist.id) {
+        await loadPlaylistSongs(playlist.id);
+      }
+    } catch (err) {
+      console.error("Add to playlist error:", err);
+      console.error("Backend response:", err.response?.data);
+
+      setStatus(
+        err.response?.data?.detail ||
+        "Could not add song to playlist"
+      );
+    }
+  }
+
+  /* =================================================
+     REMOVE SONG FROM PLAYLIST
+     ================================================= */
+
+  async function removeSongFromPlaylist(songId) {
+    if (!selectedPlaylist) return;
+
+    try {
+      await axios.delete(
+        `${API}/api/playlists/${selectedPlaylist.id}/songs/${songId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
+      );
+
+      await loadPlaylistSongs(selectedPlaylist.id);
+      setStatus("Song removed from playlist");
+    } catch (err) {
+      console.error("Remove playlist song error:", err);
+      setStatus("Unable to remove song");
+    }
+  }
+
+  /* =================================================
+     DELETE PLAYLIST
+     ================================================= */
+
+  async function deletePlaylist(playlistId) {
+    if (!token) return;
+
+    const playlist = playlists.find((item) => item.id === playlistId);
+
+    if (!playlist) return;
+
+    const confirmed = window.confirm(
+      `Delete playlist "${playlist.name}"?`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      await axios.delete(`${API}/api/playlists/${playlistId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (selectedPlaylist?.id === playlistId) {
+        setSelectedPlaylist(null);
+        setPlaylistSongs([]);
+      }
+
+      await loadPlaylists();
+      setStatus("Playlist deleted");
+    } catch (err) {
+      console.error("Delete playlist error:", err);
+      setStatus("Unable to delete playlist");
+    }
+  }
+
+  /* =================================================
+     YOUTUBE IFRAME API
+     ================================================= */
+
+  useEffect(() => {
+    if (window.YT?.Player) {
+      setYoutubeAPIReady(true);
+      return;
+    }
+
+    const existingScript = document.getElementById("youtube-iframe-api");
+
+    if (existingScript) {
+      window.onYouTubeIframeAPIReady = () => {
+        setYoutubeAPIReady(true);
+      };
+      return;
+    }
+
+    const script = document.createElement("script");
+
+    script.id = "youtube-iframe-api";
+    script.src = "https://www.youtube.com/iframe_api";
+
+    window.onYouTubeIframeAPIReady = () => {
+      setYoutubeAPIReady(true);
+    };
+
+    document.body.appendChild(script);
+  }, []);
+
+  /* =================================================
+     CREATE YOUTUBE PLAYER
+     ================================================= */
+
+  useEffect(() => {
+    if (
+      !selected?.youtube_video_id ||
+      !youtubeAPIReady ||
+      !youtubeContainerRef.current
+    ) {
+      return;
+    }
+
+    if (youtubePlayerRef.current) {
+      youtubePlayerRef.current.destroy();
+      youtubePlayerRef.current = null;
+    }
+
+    youtubePlayerRef.current = new window.YT.Player(
+      youtubeContainerRef.current,
+      {
+        videoId: selected.youtube_video_id,
+        playerVars: {
+          autoplay: 1,
+          controls: 1,
+          playsinline: 1,
+          rel: 0,
+          origin: window.location.origin,
+        },
+        events: {
+          onReady: (event) => {
+            event.target.playVideo();
+          },
+          onStateChange: (event) => {
+            if (event.data === window.YT.PlayerState.PLAYING) {
+              setYoutubePlaying(true);
+            }
+
+            if (
+              event.data === window.YT.PlayerState.PAUSED ||
+              event.data === window.YT.PlayerState.ENDED
+            ) {
+              setYoutubePlaying(false);
+            }
+          },
+        },
+      },
+    );
+
+    return () => {
+      if (youtubePlayerRef.current) {
+        youtubePlayerRef.current.destroy();
+        youtubePlayerRef.current = null;
+      }
+    };
+  }, [selected?.youtube_video_id, youtubeAPIReady]);
+
+  /* =================================================
+     YOUTUBE PROGRESS
+     ================================================= */
+
+  useEffect(() => {
+    if (!selected?.youtube_video_id || !youtubeAPIReady) {
+      setYoutubeProgress(0);
+      return;
+    }
+
+    const timer = setInterval(() => {
+      const player = youtubePlayerRef.current;
+
+      if (!player?.getCurrentTime || !player?.getDuration) {
+        return;
+      }
+
+      const duration = player.getDuration();
+
+      if (duration > 0) {
+        const currentTime = player.getCurrentTime();
+        const progress = (currentTime / duration) * 100;
+
+        setYoutubeProgress(Math.min(Math.max(progress, 0), 100));
+      }
+    }, 500);
+
+    return () => clearInterval(timer);
+  }, [selected?.youtube_video_id, youtubeAPIReady]);
+
+  /* =====================================================
+     INITIAL LOAD
+     ===================================================== */
 
   useEffect(() => {
     loadSongs();
   }, []);
 
-  /* -----------------------------------------------------
-     KEYBOARD / FEEDBACK
-     ----------------------------------------------------- */
+  useEffect(() => {
+    if (token) {
+      loadPlaylists();
+      loadLikedSongs();
+    }
+  }, [token]);
+
+  /* =====================================================
+     STATUS AUTO HIDE
+     ===================================================== */
 
   useEffect(() => {
-    if (!status && !playlistStatus) return;
+    if (!status) return;
 
     const timer = setTimeout(() => {
       setStatus("");
-      setPlaylistStatus("");
     }, 3500);
 
     return () => clearTimeout(timer);
-  }, [status, playlistStatus]);
+  }, [status]);
+
+  /* =====================================================
+     GLOBAL KEYBOARD CONTROLS
+     ===================================================== */
 
   useEffect(() => {
-    function onKeyDown(e) {
-      const tag = e.target?.tagName?.toLowerCase();
-      const typing =
-        tag === "input" || tag === "textarea" || e.target?.isContentEditable;
+    function handleKeyDown(event) {
+      const tag = event.target?.tagName?.toLowerCase();
 
-      if (e.key === "/" && !typing) {
-        e.preventDefault();
-        searchRef.current?.focus();
+      const typing =
+        tag === "input" ||
+        tag === "textarea" ||
+        event.target?.isContentEditable;
+
+      /* Escape = close player */
+      if (event.key === "Escape") {
+        setSelected(null);
+        return;
       }
 
-      if (e.key === "Escape") {
-        if (showPlaylistModal) closePlaylistModal();
-        else setSelected(null);
+      /* "/" = focus search */
+      if (event.key === "/" && !typing) {
+        event.preventDefault();
+
+        searchInputRef.current?.focus();
+
+        setStatus("Search focused");
       }
     }
 
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [showPlaylistModal]);
+    window.addEventListener("keydown", handleKeyDown);
 
-  /* -----------------------------------------------------
-     AUTH / LIKES / HISTORY
-     ----------------------------------------------------- */
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
+  /* =====================================================
+     DEMO LOGIN
+     ===================================================== */
 
   async function loginDemo() {
     if (loggingIn) return;
@@ -242,60 +489,107 @@ function App() {
       setError("");
 
       const form = new URLSearchParams();
+
       form.append("username", "demo@minispotify.local");
+
       form.append("password", "demo1234");
 
       const res = await axios.post(`${API}/api/auth/login`, form);
+
       const accessToken = res.data.access_token;
 
       localStorage.setItem("token", accessToken);
+
       setToken(accessToken);
+
       setStatus("✓ Welcome back, Demo User");
     } catch (err) {
-      console.error(err);
-      setStatus("Login failed. Please check the backend.");
+      console.error("Login error:", err);
+
+      setStatus("Login failed. Please make sure the backend is running.");
     } finally {
       setLoggingIn(false);
     }
   }
 
-  function logout() {
-    localStorage.removeItem("token");
-    setToken("");
-    setLikedSongs([]);
-    setSelected(null);
-    setStatus("Signed out.");
+  /* =====================================================
+     LOAD LIKED SONGS
+     ===================================================== */
+
+  async function loadLikedSongs() {
+    if (!token) return;
+
+    try {
+      const res = await axios.get(`${API}/api/songs/liked`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      setLikedSongs(res.data);
+    } catch (err) {
+      console.error("Liked songs loading error:", err);
+    }
   }
+
+  /* =====================================================
+     LIKE / UNLIKE SONG
+     ===================================================== */
 
   async function likeSong(song) {
     if (!token) {
-      setStatus("Please click Demo Login first.");
+      setStatus("Please click Demo Login first");
       return;
     }
 
-    if (likedSongs.includes(song.id)) {
-      setStatus(`"${song.title}" is already liked.`);
+    if (likingId === song.id) {
       return;
     }
 
     try {
       setLikingId(song.id);
 
-      await axios.post(
-        `${API}/api/songs/${song.id}/like`,
-        {},
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
+      if (likedSongs.includes(song.id)) {
+        await axios.delete(
+          `${API}/api/songs/${song.id}/like`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        );
 
-      setLikedSongs((prev) => [...prev, song.id]);
-      setStatus(`♥ Added "${song.title}" to your likes.`);
+        setLikedSongs((prev) => prev.filter((id) => id !== song.id));
+        setStatus(`♡ Removed "${song.title}" from your likes`);
+      } else {
+        await axios.post(
+          `${API}/api/songs/${song.id}/like`,
+          {},
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          },
+        );
+
+        setLikedSongs((prev) => [...prev, song.id]);
+        setStatus(`♥ Added "${song.title}" to your likes`);
+      }
     } catch (err) {
-      console.error(err);
-      setStatus("Unable to like this song.");
+      console.error("Like/unlike error:", err);
+
+      setStatus(
+        err.response?.data?.detail ||
+        "Unable to update like"
+      );
     } finally {
       setLikingId(null);
     }
   }
+
+  /* =====================================================
+     RECORD PLAY HISTORY
+     ===================================================== */
 
   async function recordPlay(song) {
     if (!token) return;
@@ -308,206 +602,210 @@ function App() {
           duration_played: 0,
           completed: false,
         },
-        { headers: { Authorization: `Bearer ${token}` } },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
       );
     } catch (err) {
-      console.error("History error:", err);
+      console.error("Play history error:", err);
     }
   }
 
+  /* =====================================================
+     PLAY SONG
+     ===================================================== */
+
   function playSong(song) {
     setSelected(song);
+    setYoutubePlaying(false);
+    setYoutubeProgress(0);
+
     recordPlay(song);
+
     setStatus(`▶ Now playing "${song.title}"`);
   }
 
-  function playNext() {
-    if (!songs.length) return;
-    const index = activeIndex >= 0 ? (activeIndex + 1) % songs.length : 0;
-    playSong(songs[index]);
+  /* =================================================
+     TOGGLE YOUTUBE PLAYBACK
+     ================================================= */
+
+  function toggleYouTubePlayback() {
+    const player = youtubePlayerRef.current;
+
+    if (!player || !window.YT) return;
+
+    const state = player.getPlayerState();
+
+    if (state === window.YT.PlayerState.PLAYING) {
+      player.pauseVideo();
+    } else {
+      player.playVideo();
+    }
   }
 
-  function playPrevious() {
-    if (!songs.length) return;
-    const index = activeIndex > 0 ? activeIndex - 1 : songs.length - 1;
-    playSong(songs[index]);
-  }
-
-  /* -----------------------------------------------------
+  /* =====================================================
      SEARCH
-     ----------------------------------------------------- */
+     ===================================================== */
 
-  function searchSongs() {
-    setSearching(true);
-    setLibraryLimit(PAGE_SIZE);
-    loadSongs(q, PAGE_SIZE);
+  function handleSearch() {
+    const cleanQuery = q.trim();
+
+    setIsSearching(true);
+
+    loadSongs(cleanQuery);
   }
+
+  function handleSearchKeyDown(event) {
+    if (event.key === "Enter") {
+      handleSearch();
+    }
+
+    if (event.key === "Escape") {
+      event.target.blur();
+    }
+  }
+
+  /* =====================================================
+     CLEAR SEARCH
+     ===================================================== */
 
   function clearSearch() {
     setQ("");
     setError("");
-    setLibraryLimit(PAGE_SIZE);
-    setHasMoreSongs(true);
-    loadSongs("", PAGE_SIZE);
-    searchRef.current?.focus();
+
+    loadSongs();
+
+    searchInputRef.current?.focus();
   }
 
-  /* -----------------------------------------------------
-     PLAYLISTS
-     ----------------------------------------------------- */
+  /* =====================================================
+     LOGOUT
+     ===================================================== */
 
-  useEffect(() => {
-    if (token) {
-      loadPlaylists();
-    } else {
-      setPlaylists([]);
-      setSelectedPlaylist(null);
-    }
-  }, [token]);
+  function logoutDemo() {
+    localStorage.removeItem("token");
 
-  async function loadPlaylists() {
-    if (!token) {
-      setPlaylistError("Please login first to view playlists.");
-      return;
-    }
+    setToken("");
+    setLikedSongs([]);
+    setPlaylists([]);
+    setSelectedPlaylist(null);
+    setPlaylistSongs([]);
+    setSelected(null);
 
-    try {
-      setLoadingPlaylists(true);
-      setPlaylistError("");
-
-      const res = await axios.get(PLAYLIST_ENDPOINT, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      const data = Array.isArray(res.data)
-        ? res.data
-        : Array.isArray(res.data?.playlists)
-          ? res.data.playlists
-          : [];
-
-      setPlaylists(data);
-
-      if (data.length && !selectedPlaylist) {
-        setSelectedPlaylist(data[0]);
-      }
-    } catch (err) {
-      console.error(err);
-      setPlaylists([]);
-
-      setPlaylistError(
-        err.response?.status === 404
-          ? "Playlist API is not available in the current backend."
-          : "Unable to load playlists.",
-      );
-    } finally {
-      setLoadingPlaylists(false);
-    }
+    setStatus("Signed out of Demo User");
   }
 
-  async function openPlaylistModal(song) {
-    setPlaylistSong(song);
-    setSelectedPlaylistId("");
-    setPlaylistError("");
-    setPlaylistStatus("");
-    setShowPlaylistModal(true);
-    await loadPlaylists();
+  /* =====================================================
+     CLOSE PLAYER
+     ===================================================== */
+
+  function closePlayer() {
+    setSelected(null);
   }
 
-  function closePlaylistModal() {
-    if (addingToPlaylist) return;
-    setShowPlaylistModal(false);
-    setPlaylistSong(null);
-    setSelectedPlaylistId("");
-    setPlaylistError("");
+  /* =====================================================
+     DERIVED DATA
+     ===================================================== */
+
+  const totalSongs = songs.length;
+
+  const totalLiked = likedSongs.length;
+
+  const averagePopularity = useMemo(() => {
+    if (!songs.length) return 0;
+
+    const total = songs.reduce(
+      (sum, song) =>
+        sum + Math.min(Math.max(Number(song.popularity) || 0, 0), 100),
+      0,
+    );
+
+    return Math.round(total / songs.length);
+  }, [songs]);
+
+  const genres = useMemo(() => {
+    return new Set(songs.map((song) => song.genre).filter(Boolean)).size;
+  }, [songs]);
+
+  const activeSongIndex = useMemo(() => {
+    if (!selected) return -1;
+
+    return songs.findIndex((song) => song.id === selected.id);
+  }, [songs, selected]);
+
+  /* =====================================================
+     NEXT SONG
+     ===================================================== */
+
+  function playNextSong() {
+    if (!songs.length) return;
+
+    const nextIndex =
+      activeSongIndex >= 0
+        ? (activeSongIndex + 1) % songs.length
+        : 0;
+
+    const nextSong = songs[nextIndex];
+
+    setSelected(nextSong);
+    setYoutubePlaying(false);
+    setYoutubeProgress(0);
+
+    recordPlay(nextSong);
+
+    setStatus(`▶ Now playing "${nextSong.title}"`);
   }
 
-  async function addToPlaylist() {
-    if (!playlistSong) return;
+  /* =====================================================
+     PREVIOUS SONG
+     ===================================================== */
 
-    if (!token) {
-      setPlaylistError("Please login first.");
-      return;
-    }
+  function playPreviousSong() {
+    if (!songs.length) return;
 
-    if (!selectedPlaylistId) {
-      setPlaylistError("Select a playlist first.");
-      return;
-    }
+    const previousIndex =
+      activeSongIndex > 0
+        ? activeSongIndex - 1
+        : songs.length - 1;
 
-    try {
-      setAddingToPlaylist(true);
-      setPlaylistError("");
+    const previousSong = songs[previousIndex];
 
-      await axios.post(
-        `${PLAYLIST_ENDPOINT}/${selectedPlaylistId}/songs`,
-        { song_id: playlistSong.id },
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
+    setSelected(previousSong);
+    setYoutubePlaying(false);
+    setYoutubeProgress(0);
 
-      setPlaylistStatus(`✓ "${playlistSong.title}" added to the playlist.`);
+    recordPlay(previousSong);
 
-      setTimeout(closePlaylistModal, 700);
-    } catch (err) {
-      console.error(err);
-      setPlaylistError(
-        err.response?.status === 404
-          ? "Playlist API is not available in the current backend."
-          : "Unable to add this song to the playlist.",
-      );
-    } finally {
-      setAddingToPlaylist(false);
-    }
+    setStatus(`▶ Now playing "${previousSong.title}"`);
   }
 
-  async function removeFromPlaylist(song) {
-    if (!selectedPlaylist?.id) return;
-
-    try {
-      setRemovingFromPlaylist(song.id);
-
-      await axios.delete(
-        `${PLAYLIST_ENDPOINT}/${selectedPlaylist.id}/songs/${song.id}`,
-        { headers: { Authorization: `Bearer ${token}` } },
-      );
-
-      setSelectedPlaylist((prev) => {
-        if (!prev) return prev;
-
-        const current = Array.isArray(prev.songs) ? prev.songs : [];
-
-        return {
-          ...prev,
-          songs: current.filter((item) => item.id !== song.id),
-        };
-      });
-
-      setPlaylistStatus(`"${song.title}" removed from playlist.`);
-    } catch (err) {
-      console.error(err);
-      setPlaylistError("Unable to remove this song.");
-    } finally {
-      setRemovingFromPlaylist(null);
-    }
-  }
-
-  const playlistSongs = Array.isArray(selectedPlaylist?.songs)
-    ? selectedPlaylist.songs
-    : [];
-
-  /* -----------------------------------------------------
+  /* =====================================================
      RENDER
-     ----------------------------------------------------- */
+     ===================================================== */
 
   return (
     <div className="page">
-      <div className="ambient ambient-one" />
-      <div className="ambient ambient-two" />
-      <div className="ambient ambient-three" />
+      {/* =================================================
+          AMBIENT BACKGROUND
+          ================================================= */}
 
-      {/* HEADER */}
+      <div className="ambient ambient-one" aria-hidden="true" />
+
+      <div className="ambient ambient-two" aria-hidden="true" />
+
+      <div className="ambient ambient-three" aria-hidden="true" />
+
+      {/* =================================================
+          HEADER
+          ================================================= */}
+
       <header className="site-header">
         <div className="brand">
-          <div className="brand-icon">♫</div>
+          <div className="brand-icon" aria-hidden="true">
+            ♫
+          </div>
 
           <div className="brand-copy">
             <div className="brand-eyebrow">MUSIC • DISCOVER • PLAY</div>
@@ -522,791 +820,539 @@ function App() {
 
         <div className="header-actions">
           <button
-            className={`admin-button ${showDashboard ? "admin-active" : ""}`}
-            type="button"
-            onClick={() => setShowDashboard((v) => !v)}
-            aria-label={showDashboard ? "Open music library" : "Open dashboard"}
-          >
-            <span>{showDashboard ? "♫" : "◈"}</span>
-            {showDashboard ? "Music" : "Dashboard"}
-          </button>
-
-          <button
             className="shortcut-hint"
             type="button"
-            onClick={() => searchRef.current?.focus()}
+            onClick={() => searchInputRef.current?.focus()}
             title="Focus search"
           >
-            ⌕ <kbd>/</kbd>
+            <span>⌕</span>
+            <kbd>/</kbd>
           </button>
 
           <button
             className={`login-button ${token ? "logged-in" : ""}`}
-            onClick={token ? logout : loginDemo}
+            onClick={token ? logoutDemo : loginDemo}
             disabled={loggingIn}
+            title={token ? "Click to sign out" : "Sign in with demo account"}
           >
             <span className="login-dot" />
+
             {loggingIn ? "Signing In..." : token ? "✓ Logged In" : "Demo Login"}
           </button>
         </div>
       </header>
 
-      {/* ADMIN DASHBOARD */}
-      {showDashboard && (
-        <section className="admin-dashboard">
-          <div className="admin-dashboard-header">
-            <div>
-              <div className="section-kicker">
-                <span className="kicker-line" />
-                ADMIN ANALYTICS
-              </div>
+      {/* =================================================
+          HERO / LIBRARY INTRO
+          ================================================= */}
 
-              <h2>
-                Music <span>Dashboard</span>
-              </h2>
-
-              <p>Platform overview and listening analytics.</p>
-            </div>
-
-            <button
-              className="admin-close-button"
-              onClick={() => setShowDashboard(false)}
-              type="button"
-            >
-              × Close
-            </button>
+      <section className="library-hero">
+        <div className="hero-copy">
+          <div className="section-kicker">
+            <span className="kicker-line" />
+            YOUR MUSIC LIBRARY
           </div>
 
-          <div className="admin-placeholder-note">
-            <span>◈</span>
-            <div>
-              <strong>Frontend Analytics Preview</strong>
-              <p>
-                Preview values are placeholders until analytics APIs are
-                available.
-              </p>
-            </div>
+          <h2>
+            Discover
+            <span> Music</span>
+          </h2>
+
+          <p>Explore your collection and find something worth playing.</p>
+        </div>
+
+        <div className="library-stats">
+          <button
+            className={`stat-card ${showStats ? "stat-active" : ""}`}
+            type="button"
+            onClick={() => setShowStats((prev) => !prev)}
+          >
+            <span className="stat-icon">♪</span>
+
+            <span className="stat-value">{totalSongs}</span>
+
+            <span className="stat-label">Songs</span>
+          </button>
+
+          <div className="stat-card">
+            <span className="stat-icon">♡</span>
+
+            <span className="stat-value">{totalLiked}</span>
+
+            <span className="stat-label">Liked</span>
           </div>
 
-          <div className="admin-stat-grid">
-            {[
-              ["👥", "TOTAL USERS", adminStats.users, "Registered accounts"],
-              ["♪", "TOTAL SONGS", adminStats.songs, "Music library"],
-              ["▶", "TOTAL PLAYS", adminStats.plays, "Recorded plays"],
-              ["♥", "TOTAL LIKES", adminStats.likes, "Song likes"],
-            ].map(([icon, label, value, sub]) => (
-              <div className="admin-stat-card" key={label}>
-                <span className="admin-stat-icon">{icon}</span>
-                <div>
-                  <span>{label}</span>
-                  <strong>{value.toLocaleString()}</strong>
-                  <small>{sub}</small>
-                </div>
-              </div>
-            ))}
+          <div className="stat-card">
+            <span className="stat-icon">◈</span>
+
+            <span className="stat-value">{genres}</span>
+
+            <span className="stat-label">Genres</span>
+          </div>
+        </div>
+      </section>
+
+      {/* =================================================
+          OPTIONAL STATS PANEL
+          ================================================= */}
+
+      {showStats && !loading && (
+        <section className="stats-panel">
+          <div className="stats-panel-item">
+            <span>Library size</span>
+            <strong>{totalSongs} songs</strong>
           </div>
 
-          <div className="admin-content-grid">
-            <div className="admin-panel">
-              <div className="admin-panel-header">
-                <div>
-                  <span>MOST PLAYED</span>
-                  <h3>Top Songs</h3>
-                </div>
-                <span className="admin-panel-badge">5 TRACKS</span>
-              </div>
+          <div className="stats-panel-item">
+            <span>Average popularity</span>
+            <strong>{averagePopularity}/100</strong>
+          </div>
 
-              <div className="admin-ranking-list">
-                {topSongs.map(([title, artist, plays], i) => (
-                  <div className="admin-ranking-row" key={title}>
-                    <div className="ranking-number">
-                      {String(i + 1).padStart(2, "0")}
-                    </div>
-                    <div className="ranking-info">
-                      <strong>{title}</strong>
-                      <span>{artist}</span>
-                    </div>
-                    <strong className="ranking-value">{plays}</strong>
-                  </div>
-                ))}
-              </div>
-            </div>
+          <div className="stats-panel-item">
+            <span>Available genres</span>
+            <strong>{genres}</strong>
+          </div>
 
-            <div className="admin-panel">
-              <div className="admin-panel-header">
-                <div>
-                  <span>LISTENING ACTIVITY</span>
-                  <h3>Top Artists</h3>
-                </div>
-                <span className="admin-panel-badge">5 ARTISTS</span>
-              </div>
-
-              <div className="admin-ranking-list">
-                {topArtists.map(([artist, plays]) => (
-                  <div className="admin-ranking-row" key={artist}>
-                    <div className="artist-avatar">{artist[0]}</div>
-                    <div className="ranking-info">
-                      <strong>{artist}</strong>
-                      <span>Total listening activity</span>
-                    </div>
-                    <strong className="ranking-value">{plays}</strong>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="admin-panel">
-              <div className="admin-panel-header">
-                <div>
-                  <span>LIBRARY MIX</span>
-                  <h3>Genre Distribution</h3>
-                </div>
-              </div>
-
-              <div className="genre-chart">
-                {genres.map(([name, value]) => (
-                  <div className="genre-row" key={name}>
-                    <div className="genre-row-top">
-                      <span>{name}</span>
-                      <strong>{value}%</strong>
-                    </div>
-                    <div className="genre-bar">
-                      <div
-                        className="genre-fill"
-                        style={{ width: `${value}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="admin-panel">
-              <div className="admin-panel-header">
-                <div>
-                  <span>LAST 7 DAYS</span>
-                  <h3>Listening Trends</h3>
-                </div>
-                <span className="trend-value">+18.4%</span>
-              </div>
-
-              <div className="trend-chart">
-                {trends.map(([day, value]) => (
-                  <div className="trend-column" key={day}>
-                    <div className="trend-value-label">{value}</div>
-                    <div className="trend-bar-wrapper">
-                      <div
-                        className="trend-bar"
-                        style={{ height: `${value}%` }}
-                      />
-                    </div>
-                    <span>{day}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+          <div className="stats-panel-item">
+            <span>Session</span>
+            <strong>{token ? "Authenticated" : "Guest"}</strong>
           </div>
         </section>
       )}
 
-      {!showDashboard && (
-        <>
-          {/* PLAYLISTS */}
-          <section className="playlist-section">
-            <div className="playlist-section-header">
-              <div>
-                <div className="section-kicker">
-                  <span className="kicker-line" />
-                  YOUR COLLECTION
-                </div>
-                <h2>Playlists</h2>
-                <p>Organize your favorite songs into collections.</p>
-              </div>
+      {/* =================================================
+          SEARCH
+          ================================================= */}
 
-              <button
-                className="playlist-refresh-button"
-                type="button"
-                onClick={loadPlaylists}
-                disabled={loadingPlaylists}
-              >
-                {loadingPlaylists ? "Loading..." : "↻ Refresh"}
-              </button>
-            </div>
+      <section className="search-section">
+        <div className="search-heading-row">
+          <div>
+            <span className="search-eyebrow">SEARCH LIBRARY</span>
 
-            {playlistError && (
-              <div className="playlist-error">
-                <span>⚠</span>
-                <div>
-                  <strong>Playlist service unavailable</strong>
-                  <p>{playlistError}</p>
-                </div>
-              </div>
-            )}
+            <span className="search-count">
+              {loading
+                ? "Finding songs..."
+                : `${songs.length} ${songs.length === 1 ? "song" : "songs"}`}
+            </span>
+          </div>
 
-            {playlistStatus && (
-              <div className="playlist-success">
-                <span>✓</span>
-                {playlistStatus}
-              </div>
-            )}
+          {q && (
+            <button
+              className="clear-search-text"
+              onClick={clearSearch}
+              type="button"
+            >
+              Clear search
+            </button>
+          )}
+        </div>
 
-            {loadingPlaylists ? (
-              <div className="playlist-loading">
-                <span className="load-more-spinner" />
-                Loading playlists...
-              </div>
-            ) : playlists.length === 0 ? (
-              <div className="playlist-empty">
-                <div className="playlist-empty-icon">♫</div>
-                <h3>No playlists available</h3>
-                <p>
-                  Your actual playlists will appear here when the playlist API
-                  is available.
-                </p>
-              </div>
-            ) : (
-              <div className="playlist-layout">
-                <aside className="playlist-sidebar">
-                  {playlists.map((playlist) => (
-                    <button
-                      type="button"
-                      key={playlist.id}
-                      className={`playlist-item ${
-                        selectedPlaylist?.id === playlist.id
-                          ? "playlist-item-active"
-                          : ""
-                      }`}
-                      onClick={() => setSelectedPlaylist(playlist)}
-                    >
-                      <span className="playlist-item-icon">♫</span>
-                      <span className="playlist-item-copy">
-                        <strong>{playlist.name}</strong>
-                        <small>
-                          {Array.isArray(playlist.songs)
-                            ? playlist.songs.length
-                            : (playlist.song_count ?? 0)}{" "}
-                          songs
-                        </small>
-                      </span>
-                    </button>
-                  ))}
-                </aside>
+        <div className="search">
+          <span className="search-icon" aria-hidden="true">
+            ⌕
+          </span>
 
-                <div className="playlist-content">
-                  {selectedPlaylist && (
-                    <>
-                      <div className="playlist-content-header">
-                        <span>SELECTED PLAYLIST</span>
-                        <h3>{selectedPlaylist.name}</h3>
-                      </div>
+          <input
+            ref={searchInputRef}
+            value={q}
+            onChange={(event) => setQ(event.target.value)}
+            onKeyDown={handleSearchKeyDown}
+            placeholder="Search songs, artists or genres..."
+            aria-label="Search songs, artists or genres"
+          />
 
-                      {playlistSongs.length === 0 ? (
-                        <div className="playlist-empty playlist-empty-small">
-                          <div className="playlist-empty-icon">♫</div>
-                          <h3>This playlist is empty</h3>
-                          <p>Add songs from your library to get started.</p>
-                        </div>
-                      ) : (
-                        <div className="playlist-song-list">
-                          {playlistSongs.map((song, i) => (
-                            <div className="playlist-song-row" key={song.id}>
-                              <span className="playlist-song-number">
-                                {String(i + 1).padStart(2, "0")}
-                              </span>
-                              <div className="playlist-song-art">♫</div>
-                              <div className="playlist-song-info">
-                                <strong>{song.title}</strong>
-                                <span>{song.artist}</span>
-                              </div>
-                              <button
-                                className="playlist-remove-button"
-                                type="button"
-                                disabled={removingFromPlaylist === song.id}
-                                onClick={() => removeFromPlaylist(song)}
-                              >
-                                {removingFromPlaylist === song.id
-                                  ? "Removing..."
-                                  : "Remove"}
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-          </section>
-
-          {/* LIBRARY HERO */}
-          <section className="library-hero">
-            <div className="hero-copy">
-              <div className="section-kicker">
-                <span className="kicker-line" />
-                YOUR MUSIC LIBRARY
-              </div>
-
-              <h2>
-                Discover<span> Music</span>
-              </h2>
-
-              <p>
-                Explore your collection, discover something new, and keep your
-                favorites organized.
-              </p>
-            </div>
-
-            <div className="library-stats">
-              <button
-                className={`stat-card ${showStats ? "stat-active" : ""}`}
-                type="button"
-                onClick={() => setShowStats((v) => !v)}
-              >
-                <span className="stat-icon">♪</span>
-                <span className="stat-value">{totalSongs}</span>
-                <span className="stat-label">Songs</span>
-              </button>
-
-              <div className="stat-card">
-                <span className="stat-icon">♡</span>
-                <span className="stat-value">{totalLiked}</span>
-                <span className="stat-label">Liked</span>
-              </div>
-
-              <div className="stat-card">
-                <span className="stat-icon">◈</span>
-                <span className="stat-value">{genreCount}</span>
-                <span className="stat-label">Genres</span>
-              </div>
-            </div>
-          </section>
-
-          {showStats && !loading && (
-            <section className="stats-panel">
-              <div className="stats-panel-item">
-                <span>Library size</span>
-                <strong>{totalSongs} songs</strong>
-              </div>
-              <div className="stats-panel-item">
-                <span>Average popularity</span>
-                <strong>{averagePopularity}/100</strong>
-              </div>
-              <div className="stats-panel-item">
-                <span>Available genres</span>
-                <strong>{genreCount}</strong>
-              </div>
-              <div className="stats-panel-item">
-                <span>Session</span>
-                <strong>{token ? "Authenticated" : "Guest"}</strong>
-              </div>
-            </section>
+          {q && (
+            <button
+              className="clear-button"
+              onClick={clearSearch}
+              aria-label="Clear search"
+              type="button"
+            >
+              ×
+            </button>
           )}
 
-          {/* SEARCH */}
-          <section className="search-section">
-            <div className="search-heading-row">
-              <div>
-                <span className="search-eyebrow">SEARCH LIBRARY</span>
-                <span className="search-count">
-                  {loading
-                    ? "Finding songs..."
-                    : `${songs.length} ${songs.length === 1 ? "song" : "songs"}`}
-                </span>
-              </div>
+          <button
+            className="search-button"
+            onClick={handleSearch}
+            disabled={loading}
+            type="button"
+          >
+            {isSearching ? "Searching..." : "Search"}
+          </button>
+        </div>
+      </section>
 
-              {q && (
+      {/* =================================================
+          STATUS
+          ================================================= */}
+
+      {status && (
+        <div className="status" role="status" aria-live="polite">
+          <span className="status-pulse">●</span>
+
+          <span>{status}</span>
+
+          <button
+            type="button"
+            onClick={() => setStatus("")}
+            aria-label="Dismiss message"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {/* =================================================
+          ERROR
+          ================================================= */}
+
+      {error && (
+        <div className="error-message" role="alert">
+          <span>⚠</span>
+
+          <div>
+            <strong>Something went wrong</strong>
+
+            <p>{error}</p>
+          </div>
+
+          <button type="button" onClick={() => loadSongs(q)}>
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* =================================================
+          PLAYLISTS
+          ================================================= */}
+
+      <section className="playlists-section">
+        <div className="search-heading-row">
+          <div>
+            <span className="search-eyebrow">YOUR PLAYLISTS</span>
+          </div>
+        </div>
+
+        <button type="button" onClick={createPlaylist}>
+          + Create Playlist
+        </button>
+
+        {playlists.length === 0 ? (
+          <p>No playlists yet.</p>
+        ) : (
+          <div className="playlists-list">
+            {playlists.map((playlist) => (
+              <div
+                className={`playlist-item ${
+                  selectedPlaylist?.id === playlist.id
+                    ? "playlist-active"
+                    : ""
+                }`}
+                key={playlist.id}
+              >
                 <button
-                  className="clear-search-text"
                   type="button"
-                  onClick={clearSearch}
+                  onClick={() => selectPlaylist(playlist)}
                 >
-                  Clear search
+                  {playlist.name}
                 </button>
-              )}
-            </div>
 
-            <div className="search">
-              <span className="search-icon">⌕</span>
-
-              <input
-                ref={searchRef}
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") searchSongs();
-                  if (e.key === "Escape") e.target.blur();
-                }}
-                placeholder="Search songs, artists or genres..."
-                aria-label="Search songs"
-              />
-
-              {q && (
                 <button
-                  className="clear-button"
                   type="button"
-                  onClick={clearSearch}
-                  aria-label="Clear search"
+                  className="playlist-delete"
+                  onClick={() => deletePlaylist(playlist.id)}
                 >
                   ×
                 </button>
-              )}
+              </div>
+            ))}
+          </div>
+        )}
 
-              <button
-                className="search-button"
-                type="button"
-                onClick={searchSongs}
-                disabled={searching}
-              >
-                {searching ? "Searching..." : "Search"}
-              </button>
-            </div>
-          </section>
-
-          {status && (
-            <div className="status" role="status">
-              <span className="status-pulse">●</span>
-              <span>{status}</span>
-              <button type="button" onClick={() => setStatus("")}>
-                ×
-              </button>
-            </div>
-          )}
-
-          {error && (
-            <div className="error-message" role="alert">
-              <span>⚠</span>
+        {selectedPlaylist && (
+          <div className="selected-playlist">
+            <div className="selected-playlist-header">
               <div>
-                <strong>Something went wrong</strong>
-                <p>{error}</p>
+                <span className="search-eyebrow">SELECTED PLAYLIST</span>
+                <h3>{selectedPlaylist.name}</h3>
               </div>
-              <button type="button" onClick={() => loadSongs(q, PAGE_SIZE)}>
-                Retry
-              </button>
             </div>
-          )}
 
-          {/* SONG LIBRARY */}
-          <main>
-            {loading ? (
-              <div className="loading">
-                <div className="loading-orb">
-                  <div className="spinner" />
-                </div>
-                <h3>Loading your music</h3>
-                <p>Preparing your library...</p>
-              </div>
-            ) : songs.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon">♫</div>
-                <span className="section-kicker">NO RESULTS</span>
-                <h2>Nothing found</h2>
-                <p>We couldn't find anything matching your search.</p>
-                <button type="button" onClick={clearSearch}>
-                  <span>↻</span>
-                  Show All Songs
-                </button>
-              </div>
+            {playlistSongs.length === 0 ? (
+              <p>No songs in this playlist yet.</p>
             ) : (
-              <>
-                <div className="grid">
-                  {songs.map((song, index) => {
-                    const liked = likedSongs.includes(song.id);
-                    const playing = selected?.id === song.id;
-                    const popularity = Math.min(
-                      Math.max(Number(song.popularity) || 0, 0),
-                      100,
-                    );
+              <div className="playlist-song-list">
+                {playlistSongs.map((playlistSong) => {
+                  const song = songs.find(
+                    (item) => item.id === playlistSong.song_id
+                  );
 
-                    return (
-                      <article
-                        className={`card ${
-                          playing ? "active-card" : ""
-                        } ${liked ? "liked-card" : ""}`}
-                        key={song.id}
-                      >
-                        {playing && (
-                          <div className="playing-badge">
-                            <span className="equalizer">
-                              <i />
-                              <i />
-                              <i />
-                              <i />
-                            </span>
-                            PLAYING
-                          </div>
-                        )}
+                  if (!song) return null;
 
-                        <div className={`cover cover-${(index % 8) + 1}`}>
-                          <div className="cover-noise" />
-                          <div className="cover-number">
-                            {String(index + 1).padStart(2, "0")}
-                          </div>
-                          <div className="music-symbol">♫</div>
-                          <div className="cover-glow" />
-                          <div className="cover-rings">
-                            <span />
-                            <span />
-                            <span />
-                          </div>
-
-                          <div className="cover-play-overlay">
-                            <button
-                              type="button"
-                              onClick={() => playSong(song)}
-                              aria-label={`Play ${song.title}`}
-                            >
-                              {playing ? "Ⅱ" : "▶"}
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="song-info">
-                          <div className="song-title-row">
-                            <h3 title={song.title}>{song.title}</h3>
-                            {liked && (
-                              <span className="liked-icon" title="Liked">
-                                ♥
-                              </span>
-                            )}
-                          </div>
-
-                          <p className="artist" title={song.artist}>
-                            {song.artist}
-                          </p>
-
-                          <div className="song-meta">
-                            <span className="genre">{song.genre}</span>
-                            <span className="meta-dot">•</span>
-                            <span className="year">{song.release_year}</span>
-                          </div>
-
-                          <div className="popularity">
-                            <div className="popularity-top">
-                              <span>POPULARITY</span>
-                              <strong>{popularity}</strong>
-                            </div>
-                            <div className="popularity-bar">
-                              <div
-                                className="popularity-fill"
-                                style={{ width: `${popularity}%` }}
-                              />
-                            </div>
-                          </div>
-
-                          <div className="actions">
-                            <button
-                              className={`play-button ${
-                                playing ? "playing" : ""
-                              }`}
-                              type="button"
-                              onClick={() => playSong(song)}
-                            >
-                              <span>{playing ? "♫" : "▶"}</span>
-                              {playing ? "Playing" : "Play"}
-                            </button>
-
-                            <button
-                              className={`like-button ${liked ? "liked" : ""}`}
-                              type="button"
-                              disabled={likingId === song.id}
-                              onClick={() => likeSong(song)}
-                            >
-                              <span>{likingId === song.id ? "..." : "♥"}</span>
-                              {likingId === song.id
-                                ? "Saving"
-                                : liked
-                                  ? "Liked"
-                                  : "Like"}
-                            </button>
-
-                            <button
-                              className="playlist-button"
-                              type="button"
-                              onClick={() => openPlaylistModal(song)}
-                            >
-                              <span>+</span>
-                              Playlist
-                            </button>
-                          </div>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-
-                {!q.trim() && (
-                  <div className="load-more-section">
-                    {hasMoreSongs ? (
-                      <button
-                        className="load-more-button"
-                        type="button"
-                        onClick={loadMoreSongs}
-                        disabled={loadingMore}
-                      >
-                        {loadingMore ? (
-                          <>
-                            <span className="load-more-spinner" />
-                            Loading more songs...
-                          </>
-                        ) : (
-                          <>
-                            <span>↓</span>
-                            Load More Songs
-                          </>
-                        )}
-                      </button>
-                    ) : (
-                      <button
-                        className="load-more-button"
-                        type="button"
-                        disabled
-                        aria-disabled="true"
-                        title="The API returned all currently available songs"
-                      >
-                        <span>✓</span>
-                        All available songs loaded
-                      </button>
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-          </main>
-
-          {/* PLAYLIST MODAL */}
-          {showPlaylistModal && playlistSong && (
-            <div
-              className="playlist-modal-backdrop"
-              onMouseDown={(e) => {
-                if (e.target === e.currentTarget) closePlaylistModal();
-              }}
-            >
-              <div
-                className="playlist-modal"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="playlist-modal-title"
-              >
-                <div className="playlist-modal-header">
-                  <div>
-                    <span>ADD TO PLAYLIST</span>
-                    <h2 id="playlist-modal-title">Choose a playlist</h2>
-                    <p>{playlistSong.title}</p>
-                  </div>
-
-                  <button
-                    className="playlist-modal-close"
-                    type="button"
-                    onClick={closePlaylistModal}
-                    disabled={addingToPlaylist}
-                    aria-label="Close"
-                  >
-                    ×
-                  </button>
-                </div>
-
-                {loadingPlaylists ? (
-                  <div className="playlist-modal-loading">
-                    <span className="load-more-spinner" />
-                    Loading your playlists...
-                  </div>
-                ) : playlists.length === 0 ? (
-                  <div className="playlist-modal-empty">
-                    <div>♫</div>
-                    <h3>No playlists found</h3>
-                    <p>
-                      {playlistError ||
-                        "No playlists are available for this account."}
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    <div className="playlist-select-list">
-                      {playlists.map((playlist) => (
-                        <button
-                          type="button"
-                          key={playlist.id}
-                          className={`playlist-select-option ${
-                            selectedPlaylistId === String(playlist.id)
-                              ? "selected"
-                              : ""
-                          }`}
-                          onClick={() =>
-                            setSelectedPlaylistId(String(playlist.id))
-                          }
-                        >
-                          <span className="playlist-option-icon">♫</span>
-
-                          <span>
-                            <strong>{playlist.name}</strong>
-                            <small>
-                              {Array.isArray(playlist.songs)
-                                ? playlist.songs.length
-                                : (playlist.song_count ?? 0)}{" "}
-                              songs
-                            </small>
-                          </span>
-
-                          <span className="playlist-option-check">
-                            {selectedPlaylistId === String(playlist.id)
-                              ? "✓"
-                              : ""}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-
-                    {playlistError && (
-                      <div className="playlist-modal-error">
-                        ⚠ {playlistError}
+                  return (
+                    <div
+                      className="playlist-song"
+                      key={`${playlistSong.playlist_id}-${playlistSong.song_id}`}
+                    >
+                      <div>
+                        <strong>{song.title}</strong>
+                        <span>{song.artist}</span>
                       </div>
-                    )}
 
-                    {playlistStatus && (
-                      <div className="playlist-modal-success">
-                        ✓ {playlistStatus}
-                      </div>
-                    )}
-
-                    <div className="playlist-modal-actions">
                       <button
-                        className="playlist-cancel-button"
                         type="button"
-                        onClick={closePlaylistModal}
-                        disabled={addingToPlaylist}
+                        onClick={() => playSong(song)}
                       >
-                        Cancel
+                        ▶
                       </button>
 
                       <button
-                        className="playlist-add-button"
                         type="button"
-                        onClick={addToPlaylist}
-                        disabled={addingToPlaylist || !selectedPlaylistId}
+                        onClick={() => removeSongFromPlaylist(song.id)}
                       >
-                        {addingToPlaylist ? "Adding..." : "Add to Playlist"}
+                        Remove
                       </button>
                     </div>
-                  </>
-                )}
+                  );
+                })}
               </div>
-            </div>
-          )}
-        </>
-      )}
+            )}
+          </div>
+        )}
+      </section>
 
-      {/* PLAYER */}
+      {/* =================================================
+          MUSIC AREA
+          ================================================= */}
+
+      <main>
+        {loading ? (
+          /* =================================================
+             LOADING
+             ================================================= */
+
+          <div className="loading">
+            <div className="loading-orb">
+              <div className="spinner" />
+            </div>
+
+            <h3>Loading your music</h3>
+
+            <p>Preparing your library...</p>
+          </div>
+        ) : songs.length === 0 ? (
+          /* =================================================
+             EMPTY
+             ================================================= */
+
+          <div className="empty-state">
+            <div className="empty-icon">♫</div>
+
+            <span className="section-kicker">NO RESULTS</span>
+
+            <h2>Nothing found</h2>
+
+            <p>We couldn't find anything matching your search.</p>
+
+            <button onClick={clearSearch} type="button">
+              <span>↻</span>
+              Show All Songs
+            </button>
+          </div>
+        ) : (
+          /* =================================================
+             SONG GRID
+             ================================================= */
+
+          <div className="grid">
+            {songs.map((song, index) => {
+              const isLiked = likedSongs.includes(song.id);
+
+              const isPlaying = selected?.id === song.id;
+
+              const popularity = Math.min(
+                Math.max(Number(song.popularity) || 0, 0),
+                100,
+              );
+
+              return (
+                <article
+                  className={`card ${isPlaying ? "active-card" : ""} ${
+                    isLiked ? "liked-card" : ""
+                  }`}
+                  key={song.id}
+                >
+                  {/* =====================================
+                        ACTIVE CARD INDICATOR
+                        ===================================== */}
+
+                  {isPlaying && (
+                    <div
+                      className="playing-badge"
+                      aria-label="Currently playing"
+                    >
+                      <span className="equalizer">
+                        <i />
+                        <i />
+                        <i />
+                        <i />
+                      </span>
+                      PLAYING
+                    </div>
+                  )}
+
+                  {/* =====================================
+                        ALBUM ART
+                        ===================================== */}
+
+                  <div className={`cover cover-${(index % 8) + 1}`}>
+                    <div className="cover-noise" />
+
+                    <div className="cover-number">
+                      {String(index + 1).padStart(2, "0")}
+                    </div>
+
+                    <div className="music-symbol">♫</div>
+
+                    <div className="cover-glow" />
+
+                    <div className="cover-rings">
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+
+                    <div className="cover-play-overlay">
+                      <button
+                        type="button"
+                        onClick={() => playSong(song)}
+                        aria-label={`Play ${song.title}`}
+                      >
+                        {isPlaying ? "Ⅱ" : "▶"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* =====================================
+                        SONG INFORMATION
+                        ===================================== */}
+
+                  <div className="song-info">
+                    <div className="song-title-row">
+                      <h3 title={song.title}>{song.title}</h3>
+
+                      {isLiked && (
+                        <span
+                          className="liked-icon"
+                          title="Liked"
+                          aria-label="Liked"
+                        >
+                          ♥
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="artist" title={song.artist}>
+                      {song.artist}
+                    </p>
+
+                    <div className="song-meta">
+                      <span className="genre">{song.genre}</span>
+
+                      <span className="meta-dot">•</span>
+
+                      <span className="year">{song.release_year}</span>
+                    </div>
+
+                    {/* =================================
+                          POPULARITY
+                          ================================= */}
+
+                    <div className="popularity">
+                      <div className="popularity-top">
+                        <span>POPULARITY</span>
+
+                        <strong>{popularity}</strong>
+                      </div>
+
+                      <div className="popularity-bar">
+                        <div
+                          className="popularity-fill"
+                          style={{
+                            width: `${popularity}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* =================================
+                          ACTIONS
+                          ================================= */}
+
+                    <div className="actions">
+                      <button
+                        className={`play-button ${isPlaying ? "playing" : ""}`}
+                        onClick={() => playSong(song)}
+                        type="button"
+                      >
+                        <span>{isPlaying ? "♫" : "▶"}</span>
+
+                        {isPlaying ? "Playing" : "Play"}
+                      </button>
+
+                      <button
+                        className={`like-button ${isLiked ? "liked" : ""}`}
+                        onClick={() => likeSong(song)}
+                        disabled={likingId === song.id}
+                        type="button"
+                      >
+                        <span>{likingId === song.id ? "..." : "♥"}</span>
+
+                        {likingId === song.id
+                          ? "Saving"
+                          : isLiked
+                            ? "Liked"
+                            : "Like"}
+                      </button>
+
+                      <button
+                        className="playlist-button"
+                        onClick={() => addSongToPlaylist(song)}
+                        type="button"
+                      >
+                        + Playlist
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </main>
+
+      {/* =================================================
+          FLOATING NOW PLAYING PLAYER
+          ================================================= */}
+
       {selected && (
         <div className="player" role="region" aria-label="Music player">
+          {/* =============================================
+              PLAYER HEADER
+              ============================================= */}
+
           <div className="player-top">
             <div className="player-info">
               <div
                 className={`mini-cover ${
-                  activeIndex >= 0 ? `cover-${(activeIndex % 8) + 1}` : ""
+                  activeSongIndex >= 0
+                    ? `cover-${(activeSongIndex % 8) + 1}`
+                    : ""
                 }`}
               >
                 <span>♫</span>
+
                 <div className="mini-equalizer">
                   <i />
                   <i />
@@ -1316,86 +1362,116 @@ function App() {
 
               <div className="player-song">
                 <span className="now-playing-label">NOW PLAYING</span>
+
                 <strong title={selected.title}>{selected.title}</strong>
+
                 <span title={selected.artist}>{selected.artist}</span>
               </div>
             </div>
 
             <div className="player-meta">
               <span>{selected.genre}</span>
+
               <span>•</span>
+
               <span>{selected.release_year}</span>
             </div>
           </div>
 
+          {/* =============================================
+              PLAYER CONTROLS
+              ============================================= */}
+
           <div className="player-controls">
             <button
-              className="player-control"
               type="button"
-              onClick={playPrevious}
+              className="player-control"
+              onClick={playPreviousSong}
               aria-label="Previous song"
+              title="Previous"
             >
               ‹‹
             </button>
 
             <button
-              className="player-main-button"
               type="button"
-              onClick={() => playSong(selected)}
-              aria-label="Play current song"
+              className="player-main-button"
+              onClick={toggleYouTubePlayback}
+              aria-label={youtubePlaying ? "Pause current song" : "Play current song"}
             >
-              ▶
+              {youtubePlaying ? "Ⅱ" : "▶"}
             </button>
 
             <button
-              className="player-control"
               type="button"
-              onClick={playNext}
+              className="player-control"
+              onClick={playNextSong}
               aria-label="Next song"
+              title="Next"
             >
               ››
             </button>
           </div>
 
+          {/* =============================================
+              PLAYER CONTENT
+              ============================================= */}
+
           <div className="player-content">
             {selected.youtube_video_id ? (
-              <iframe
-                src={`https://www.youtube.com/embed/${selected.youtube_video_id}`}
-                title={`Playing ${selected.title}`}
-                allow="autoplay; encrypted-media; picture-in-picture"
-                allowFullScreen
+              <div
+                ref={youtubeContainerRef}
+                className="youtube-player"
               />
             ) : (
               <div className="placeholder">
                 <div className="placeholder-icon">♪</div>
+
                 <div>
                   <strong>Ready to play</strong>
-                  <p>This song doesn't have a verified YouTube video ID.</p>
+
+                  <p>
+                    This demo song doesn't have a verified YouTube video ID yet.
+                  </p>
                 </div>
               </div>
             )}
           </div>
 
+          {/* =============================================
+              PLAYER FOOTER
+              ============================================= */}
+
           <div className="player-footer">
             <div className="player-progress">
-              <span />
+              <span
+                style={{
+                  width: `${youtubeProgress}%`,
+                }}
+              />
             </div>
 
             <div className="player-footer-info">
               <span>
-                {activeIndex >= 0
-                  ? `Track ${activeIndex + 1} of ${songs.length}`
+                {activeSongIndex >= 0
+                  ? `Track ${activeSongIndex + 1} of ${songs.length}`
                   : "Mini Spotify"}
               </span>
+
               <span>♫ Playing</span>
             </div>
           </div>
 
+          {/* =============================================
+              CLOSE
+              ============================================= */}
+
           <button
             className="close-player"
+            onClick={closePlayer}
+            aria-label="Close music player"
+            title="Close player"
             type="button"
-            onClick={() => setSelected(null)}
-            aria-label="Close player"
           >
             ×
           </button>
