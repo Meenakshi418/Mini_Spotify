@@ -77,7 +77,7 @@ try:
         db.query(Song)
         .filter(Song.youtube_video_id.is_(None))
         .order_by(Song.popularity.desc())
-        .limit(10)
+        .limit(100)
         .all()
     )
 

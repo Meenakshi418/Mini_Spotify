@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
+import Dashboard from "./Dashboard";
 
 const API = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
@@ -33,6 +34,7 @@ function App() {
 
   const [isSearching, setIsSearching] = useState(false);
   const [showStats, setShowStats] = useState(false);
+  const [showDashboard, setShowDashboard] = useState(false);
 
   const searchInputRef = useRef(null);
   const youtubePlayerRef = useRef(null);
@@ -786,7 +788,7 @@ function App() {
      ===================================================== */
 
   return (
-    <div className="page">
+    <div className={`page ${showDashboard ? "dashboard-mode" : ""}`}>
       {/* =================================================
           AMBIENT BACKGROUND
           ================================================= */}
@@ -820,6 +822,14 @@ function App() {
 
         <div className="header-actions">
           <button
+            className={`dashboard-button ${showDashboard ? "dashboard-active" : ""}`}
+            type="button"
+            onClick={() => setShowDashboard((prev) => !prev)}
+          >
+            <span>◈</span>
+            {showDashboard ? "Library" : "Analytics"}
+          </button>
+          <button
             className="shortcut-hint"
             type="button"
             onClick={() => searchInputRef.current?.focus()}
@@ -841,6 +851,7 @@ function App() {
           </button>
         </div>
       </header>
+      {showDashboard && <Dashboard />}
 
       {/* =================================================
           HERO / LIBRARY INTRO
@@ -1262,7 +1273,11 @@ function App() {
 
                       <span className="meta-dot">•</span>
 
-                      <span className="year">{song.release_year}</span>
+                      <span className="year">{song.release_year || "—"}</span>
+
+                      <span className="meta-dot">•</span>
+
+                      <span className="song-id">ID #{song.id}</span>
                     </div>
 
                     {/* =================================

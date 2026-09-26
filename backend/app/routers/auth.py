@@ -5,6 +5,7 @@ from ..database import get_db
 from ..models import User
 from ..schemas import RegisterRequest, Token
 from ..security import create_access_token, hash_password, verify_password
+from ..deps import get_current_user
 
 router = APIRouter()
 
@@ -25,3 +26,12 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     if not user or not verify_password(form_data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     return {"access_token": create_access_token(user.id), "token_type": "bearer"}
+
+@router.get("/me")
+def get_me(current_user = Depends(get_current_user)):
+    return {
+        "id": current_user.id,
+        "name": current_user.name,
+        "email": current_user.email,
+        "role": current_user.role,
+    }

@@ -5,10 +5,12 @@ from .database import Base
 
 class User(Base):
     __tablename__ = "users"
+
     id = Column(Integer, primary_key=True)
     name = Column(String(100), nullable=False)
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
+    role = Column(String(20), nullable=False, default="user")
 
 class Song(Base):
     __tablename__ = "songs"
@@ -48,4 +50,5 @@ class PlaylistSong(Base):
     playlist_id = Column(Integer, ForeignKey("playlists.id"), primary_key=True, nullable=False, index=True)
     song_id = Column(Integer, ForeignKey("songs.id"), primary_key=True, nullable=False, index=True)
     position = Column(Integer, nullable=False, index=True)
+
     
