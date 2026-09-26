@@ -1,12 +1,22 @@
 from pathlib import Path
 
 import pandas as pd
-import sqlite3
+
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
+
+import sys
+
+sys.path.insert(
+    0,
+    str(Path(__file__).resolve().parents[2] / "backend")
+)
+
+from app.database import SessionLocal
+from app.models import Song
 
 
 # ---------------------------------------
@@ -24,12 +34,17 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 # ---------------------------------------
 df = pd.read_csv("data/processed/synthetic_activity.csv")
 
-conn = sqlite3.connect("backend/mini_spotify.db")
-songs = pd.read_sql_query(
-    "SELECT id AS song_id, artist FROM songs",
-    conn
+db = SessionLocal()
+
+try:
+    songs = db.query(Song.id, Song.artist).all()
+finally:
+    db.close()
+
+songs = pd.DataFrame(
+    songs,
+    columns=["song_id", "artist"]
 )
-conn.close()
 
 df = df.merge(songs, on="song_id", how="left")
 
