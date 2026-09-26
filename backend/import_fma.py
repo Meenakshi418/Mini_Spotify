@@ -31,7 +31,6 @@ def main():
     print("Reading FMA dataset...")
     print(f"File: {CSV_PATH}")
 
-    # FMA uses a multi-level header.
     df = pd.read_csv(
         CSV_PATH,
         low_memory=False,
@@ -41,8 +40,6 @@ def main():
         "track_id",
         "title",
         "artist_name",
-        "album_title",
-        "duration_seconds",
         "genre",
         "fma_listens",
     ]
@@ -60,15 +57,6 @@ def main():
 
         raise SystemExit("FMA column mapping failed.")
 
-    # -------------------------------------------------
-    # CLEAN / CONVERT
-    # -------------------------------------------------
-
-    df["duration_seconds"] = pd.to_numeric(
-        df["duration_seconds"],
-        errors="coerce",
-    )
-
     df["fma_listens"] = pd.to_numeric(
         df["fma_listens"],
         errors="coerce",
@@ -76,7 +64,6 @@ def main():
 
     df["release_year"] = None
 
-    # Remove invalid IDs/titles.
     df = df.dropna(
         subset=[
             "track_id",
@@ -85,18 +72,8 @@ def main():
     )
 
     df["track_id"] = df["track_id"].astype(int)
+    df = df.drop_duplicates(subset=["track_id"])
 
-    # Remove duplicate track IDs.
-    df = df.drop_duplicates(
-        subset=["track_id"]
-    )
-
-    # -------------------------------------------------
-    # POPULARITY
-    # -------------------------------------------------
-
-    # FMA listens can vary enormously, so use log scaling
-    # and convert the result to 0-100 for your frontend.
     listens_log = np.log1p(df["fma_listens"])
 
     min_value = listens_log.min()
@@ -117,16 +94,11 @@ def main():
         .astype(int)
     )
 
-    # -------------------------------------------------
-    # DATABASE
-    # -------------------------------------------------
-
     db = SessionLocal()
 
     try:
-        print("\nClearing demo song data...")
+        print("\nClearing existing song-related data...")
 
-        # Remove dependent rows first.
         db.query(PlaylistSong).delete(
             synchronize_session=False
         )
@@ -139,22 +111,18 @@ def main():
             synchronize_session=False
         )
 
-        # Remove existing songs.
         db.query(Song).delete(
             synchronize_session=False
         )
 
         db.commit()
 
-        print("Demo songs removed.")
+        print("Existing demo songs removed.")
         print("Starting FMA import...\n")
 
         records = []
 
-        has_duration = hasattr(Song, "duration")
-
         for _, row in df.iterrows():
-
             title = clean_value(row["title"])
 
             if not title:
@@ -165,51 +133,23 @@ def main():
                 or "Unknown Artist"
             )
 
-            album = (
-                clean_value(row["album_title"])
-                or "Unknown Album"
-            )
-
             genre = (
                 clean_value(row["genre"])
                 or "Unknown"
             )
 
-            release_year = None
-
-            if pd.notna(row["release_year"]):
-                release_year = int(
-                    row["release_year"]
-                )
-
-            record = {
+            records.append({
                 "id": int(row["track_id"]),
                 "title": title,
                 "artist": artist,
-                "album": album,
                 "genre": genre,
-                "release_year": release_year,
+                "release_year": None,
                 "popularity": int(row["popularity"]),
                 "youtube_video_id": None,
-            }
+            })
 
-            if has_duration:
-                duration = row["duration_seconds"]
-
-                if pd.notna(duration):
-                    record["duration"] = float(duration)
-                else:
-                    record["duration"] = 0
-
-            records.append(record)
-
-            # Insert in batches.
             if len(records) >= 2000:
-                db.bulk_insert_mappings(
-                    Song,
-                    records,
-                )
-
+                db.bulk_insert_mappings(Song, records)
                 db.commit()
 
                 print(
@@ -218,13 +158,8 @@ def main():
 
                 records = []
 
-        # Remaining records.
         if records:
-            db.bulk_insert_mappings(
-                Song,
-                records,
-            )
-
+            db.bulk_insert_mappings(Song, records)
             db.commit()
 
         total = db.query(Song).count()

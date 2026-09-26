@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import get_current_user
-from ..models import Playlist, User, PlaylistSong
+from ..models import Playlist, User, PlaylistSong, Song
 from ..schemas import PlaylistCreate, PlaylistOut, PlaylistSongInsert, PlaylistSongOut
 
 router = APIRouter()
@@ -33,6 +33,10 @@ def show_playlist(db: Session = Depends(get_db), user: User = Depends(get_curren
 
 @router.post("/{playlist_id}/songs", response_model=PlaylistSongOut)
 def insert_playlist_song(playlist_id: int, payload: PlaylistSongInsert, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+
+    if not db.get(Song, payload.song_id):
+        raise HTTPException(status_code=404, detail="Song not found")
+
     playlist = (
         db.query(Playlist)
         .filter(

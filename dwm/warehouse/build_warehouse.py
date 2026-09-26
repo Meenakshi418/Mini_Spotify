@@ -1,91 +1,82 @@
 from pathlib import Path
-import sqlite3
-
+import sys
 import pandas as pd
+from sqlalchemy import text
 
-
-# Project root
 BASE_DIR = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(BASE_DIR / "backend"))
 
-# Input files
+from app.database import engine
+
 FMA_FILE = BASE_DIR / "data" / "processed" / "tracks_clean.csv"
 ACTIVITY_FILE = BASE_DIR / "data" / "processed" / "synthetic_activity.csv"
 
-# Existing application database
-APP_DB = BASE_DIR / "backend" / "mini_spotify.db"
-
-# New warehouse database
-WAREHOUSE_DB = BASE_DIR / "dwm" / "warehouse" / "mini_spotify_warehouse.db"
-
 
 def create_tables(conn):
-    """Create the DWM star-schema tables."""
-
-    conn.executescript(
-        """
+    conn.execute(text("""
         DROP TABLE IF EXISTS fact_listening;
         DROP TABLE IF EXISTS dim_song;
-        DROP TABLE IF EXISTS dim_artist;
-        DROP TABLE IF EXISTS dim_genre;
         DROP TABLE IF EXISTS dim_date;
+        DROP TABLE IF EXISTS dim_genre;
+        DROP TABLE IF EXISTS dim_artist;
         DROP TABLE IF EXISTS dim_user;
 
         CREATE TABLE dim_user (
-            user_key INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER UNIQUE NOT NULL,
-            user_name TEXT,
-            email TEXT,
-            created_at TEXT
+            user_key BIGINT PRIMARY KEY,
+            user_id BIGINT UNIQUE NOT NULL,
+            user_name VARCHAR(100),
+            email VARCHAR(255),
+            created_at TIMESTAMP
         );
 
         CREATE TABLE dim_artist (
-            artist_key INTEGER PRIMARY KEY AUTOINCREMENT,
-            source_artist_id INTEGER,
-            artist_name TEXT NOT NULL
+            artist_key BIGINT PRIMARY KEY,
+            source_artist_id BIGINT,
+            artist_name VARCHAR(255) NOT NULL
         );
 
         CREATE TABLE dim_genre (
-            genre_key INTEGER PRIMARY KEY AUTOINCREMENT,
-            genre_name TEXT NOT NULL UNIQUE
+            genre_key BIGINT PRIMARY KEY,
+            genre_name VARCHAR(100) UNIQUE NOT NULL
         );
 
         CREATE TABLE dim_date (
             date_key INTEGER PRIMARY KEY,
-            full_date TEXT UNIQUE NOT NULL,
+            full_date DATE UNIQUE NOT NULL,
             day INTEGER,
             month INTEGER,
-            month_name TEXT,
+            month_name VARCHAR(20),
             quarter INTEGER,
             year INTEGER
         );
 
         CREATE TABLE dim_song (
-            song_key INTEGER PRIMARY KEY AUTOINCREMENT,
-            source_track_id INTEGER UNIQUE NOT NULL,
-            title TEXT NOT NULL,
-            artist_key INTEGER,
-            genre_key INTEGER,
-            album_id INTEGER,
-            album_title TEXT,
-            duration_seconds REAL,
-            fma_listens INTEGER,
-            fma_favorites INTEGER,
-            fma_interest INTEGER,
+            song_key BIGINT PRIMARY KEY,
+            source_track_id BIGINT UNIQUE NOT NULL,
+            title VARCHAR(500) NOT NULL,
+            artist_key BIGINT,
+            genre_key BIGINT,
+            album_id BIGINT,
+            album_title VARCHAR(500),
+            duration_seconds NUMERIC(10,2),
+            fma_listens BIGINT,
+            fma_favorites BIGINT,
+            fma_interest BIGINT,
             FOREIGN KEY (artist_key) REFERENCES dim_artist(artist_key),
             FOREIGN KEY (genre_key) REFERENCES dim_genre(genre_key)
         );
 
         CREATE TABLE fact_listening (
-            listening_key INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_key INTEGER NOT NULL,
-            song_key INTEGER NOT NULL,
-            artist_key INTEGER,
-            genre_key INTEGER,
+            listening_key BIGINT PRIMARY KEY,
+            user_key BIGINT NOT NULL,
+            song_key BIGINT NOT NULL,
+            artist_key BIGINT,
+            genre_key BIGINT,
             date_key INTEGER NOT NULL,
-            started_at TEXT NOT NULL,
-            duration_played REAL DEFAULT 0,
-            completed INTEGER DEFAULT 0,
-            liked INTEGER DEFAULT 0,
+            started_at TIMESTAMP NOT NULL,
+            duration_played NUMERIC(10,2) DEFAULT 0,
+            completed BOOLEAN DEFAULT FALSE,
+            liked BOOLEAN DEFAULT FALSE,
             FOREIGN KEY (user_key) REFERENCES dim_user(user_key),
             FOREIGN KEY (song_key) REFERENCES dim_song(song_key),
             FOREIGN KEY (artist_key) REFERENCES dim_artist(artist_key),
@@ -98,422 +89,301 @@ def create_tables(conn):
         CREATE INDEX idx_fact_artist ON fact_listening(artist_key);
         CREATE INDEX idx_fact_genre ON fact_listening(genre_key);
         CREATE INDEX idx_fact_date ON fact_listening(date_key);
-        """
-    )
-
-
-def load_dimensions(conn, fma_df, activity_df):
-    """Load all dimension tables."""
-
-    # -------------------------
-    # DIM USER
-    # -------------------------
-    user_ids = sorted(activity_df["user_id"].dropna().unique())
-
-    user_rows = [
-        (int(user_id), f"Synthetic User {int(user_id)}", None, None)
-        for user_id in user_ids
-    ]
-
-    conn.executemany(
-        """
-        INSERT INTO dim_user
-        (user_id, user_name, email, created_at)
-        VALUES (?, ?, ?, ?)
-        """,
-        user_rows,
-    )
-
-    # -------------------------
-    # DIM ARTIST
-    # -------------------------
-    artists = (
-        fma_df[["artist_id", "artist_name"]]
-        .dropna(subset=["artist_name"])
-        .copy()
-    )
-
-    artists["artist_name"] = artists["artist_name"].astype(str).str.strip()
-
-    # Keep one record per artist ID + name
-    artists = artists.drop_duplicates(
-        subset=["artist_id", "artist_name"]
-    )
-
-    artist_rows = []
-
-    for _, row in artists.iterrows():
-        artist_id = row["artist_id"]
-
-        if pd.isna(artist_id):
-            artist_id = None
-        else:
-            artist_id = int(artist_id)
-
-        artist_rows.append(
-            (
-                artist_id,
-                row["artist_name"],
-            )
-        )
-
-    conn.executemany(
-        """
-        INSERT INTO dim_artist
-        (source_artist_id, artist_name)
-        VALUES (?, ?)
-        """,
-        artist_rows,
-    )
-
-    # -------------------------
-    # DIM GENRE
-    # -------------------------
-    genres = (
-        fma_df["genre"]
-        .dropna()
-        .astype(str)
-        .str.strip()
-    )
-
-    genres = sorted(
-        genre for genre in genres.unique()
-        if genre and genre.lower() != "nan"
-    )
-
-    conn.executemany(
-        """
-        INSERT INTO dim_genre (genre_name)
-        VALUES (?)
-        """,
-        [(genre,) for genre in genres],
-    )
-
-    # -------------------------
-    # DIM DATE
-    # -------------------------
-    activity_dates = pd.to_datetime(
-        activity_df["started_at"],
-        errors="coerce"
-    ).dropna().dt.date.unique()
-
-    date_rows = []
-
-    for date_value in sorted(activity_dates):
-        year = date_value.year
-        month = date_value.month
-        day = date_value.day
-        quarter = ((month - 1) // 3) + 1
-        date_key = int(date_value.strftime("%Y%m%d"))
-
-        date_rows.append(
-            (
-                date_key,
-                date_value.isoformat(),
-                day,
-                month,
-                date_value.strftime("%B"),
-                quarter,
-                year,
-            )
-        )
-
-    conn.executemany(
-        """
-        INSERT INTO dim_date
-        (
-            date_key,
-            full_date,
-            day,
-            month,
-            month_name,
-            quarter,
-            year
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        date_rows,
-    )
-
-    # -------------------------
-    # LOOKUP MAPS
-    # -------------------------
-    artist_map = {}
-
-    rows = conn.execute(
-        """
-        SELECT artist_key, source_artist_id, artist_name
-        FROM dim_artist
-        """
-    ).fetchall()
-
-    for artist_key, source_artist_id, artist_name in rows:
-        if source_artist_id is not None:
-            artist_map[("id", int(source_artist_id))] = artist_key
-
-        artist_map[("name", artist_name)] = artist_key
-
-    genre_map = {
-        row[1]: row[0]
-        for row in conn.execute(
-            "SELECT genre_key, genre_name FROM dim_genre"
-        ).fetchall()
-    }
-
-    user_map = {
-        row[1]: row[0]
-        for row in conn.execute(
-            "SELECT user_key, user_id FROM dim_user"
-        ).fetchall()
-    }
-
-    date_map = {
-        row[1]: row[0]
-        for row in conn.execute(
-            "SELECT date_key, full_date FROM dim_date"
-        ).fetchall()
-    }
-
-    # -------------------------
-    # DIM SONG
-    # -------------------------
-    song_rows = []
-
-    for _, row in fma_df.iterrows():
-
-        artist_key = None
-
-        if pd.notna(row["artist_id"]):
-            artist_key = artist_map.get(
-                ("id", int(row["artist_id"]))
-            )
-
-        if artist_key is None and pd.notna(row["artist_name"]):
-            artist_key = artist_map.get(
-                ("name", str(row["artist_name"]).strip())
-            )
-
-        genre_key = None
-
-        if pd.notna(row["genre"]):
-            genre_name = str(row["genre"]).strip()
-            genre_key = genre_map.get(genre_name)
-
-        song_rows.append(
-            (
-                int(row["track_id"]),
-                str(row["title"]),
-                artist_key,
-                genre_key,
-                int(row["album_id"]) if pd.notna(row["album_id"]) else None,
-                str(row["album_title"])
-                if pd.notna(row["album_title"])
-                else None,
-                float(row["duration_seconds"])
-                if pd.notna(row["duration_seconds"])
-                else None,
-                int(row["fma_listens"])
-                if pd.notna(row["fma_listens"])
-                else None,
-                int(row["fma_favorites"])
-                if pd.notna(row["fma_favorites"])
-                else None,
-                int(row["fma_interest"])
-                if pd.notna(row["fma_interest"])
-                else None,
-            )
-        )
-
-    conn.executemany(
-        """
-        INSERT INTO dim_song
-        (
-            source_track_id,
-            title,
-            artist_key,
-            genre_key,
-            album_id,
-            album_title,
-            duration_seconds,
-            fma_listens,
-            fma_favorites,
-            fma_interest
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        song_rows,
-    )
-
-    song_map = {
-        row[1]: row[0]
-        for row in conn.execute(
-            """
-            SELECT song_key, source_track_id
-            FROM dim_song
-            """
-        ).fetchall()
-    }
-
-    return user_map, artist_map, genre_map, date_map, song_map
-
-
-def load_fact_table(
-    conn,
-    activity_df,
-    user_map,
-    artist_map,
-    genre_map,
-    date_map,
-    song_map,
-):
-    """Load listening-history events into fact_listening."""
-
-    fact_rows = []
-
-    for _, row in activity_df.iterrows():
-
-        user_key = user_map.get(int(row["user_id"]))
-        song_key = song_map.get(int(row["song_id"]))
-
-        if user_key is None or song_key is None:
-            continue
-
-        artist_key = None
-
-        genre_name = str(row["genre"]).strip()
-
-        genre_key = genre_map.get(genre_name)
-
-        started_at = pd.to_datetime(
-            row["started_at"],
-            errors="coerce"
-        )
-
-        if pd.isna(started_at):
-            continue
-
-        full_date = started_at.date().isoformat()
-        date_key = date_map.get(full_date)
-
-        # Get artist/genre from the song dimension.
-        song_info = conn.execute(
-            """
-            SELECT artist_key, genre_key
-            FROM dim_song
-            WHERE song_key = ?
-            """,
-            (song_key,),
-        ).fetchone()
-
-        if song_info:
-            artist_key = song_info[0]
-
-            if genre_key is None:
-                genre_key = song_info[1]
-
-        fact_rows.append(
-            (
-                user_key,
-                song_key,
-                artist_key,
-                genre_key,
-                date_key,
-                started_at.isoformat(),
-                float(row["duration_played"]),
-                int(bool(row["completed"])),
-                int(bool(row["liked"])),
-            )
-        )
-
-    conn.executemany(
-        """
-        INSERT INTO fact_listening
-        (
-            user_key,
-            song_key,
-            artist_key,
-            genre_key,
-            date_key,
-            started_at,
-            duration_played,
-            completed,
-            liked
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        fact_rows,
-    )
-
-    return len(fact_rows)
+    """))
 
 
 def main():
     print("Reading datasets...")
 
-    fma_df = pd.read_csv(FMA_FILE)
+    fma_df = pd.read_csv(FMA_FILE, low_memory=False)
     activity_df = pd.read_csv(ACTIVITY_FILE)
 
     print(f"FMA songs loaded: {len(fma_df)}")
     print(f"Activity records loaded: {len(activity_df)}")
 
-    # Start with a fresh warehouse
-    if WAREHOUSE_DB.exists():
-        WAREHOUSE_DB.unlink()
+    fma_df = fma_df.drop_duplicates(subset=["track_id"]).copy()
 
-    conn = sqlite3.connect(WAREHOUSE_DB)
-
-    try:
+    with engine.begin() as conn:
+        print("\nCreating PostgreSQL warehouse tables...")
         create_tables(conn)
 
-        print("\nLoading dimensions...")
+        user_ids = sorted(activity_df["user_id"].dropna().unique())
 
-        (
-            user_map,
-            artist_map,
-            genre_map,
-            date_map,
-            song_map,
-        ) = load_dimensions(
+        dim_user = pd.DataFrame({
+            "user_key": range(1, len(user_ids) + 1),
+            "user_id": [int(x) for x in user_ids],
+            "user_name": [f"Synthetic User {int(x)}" for x in user_ids],
+            "email": [None] * len(user_ids),
+            "created_at": [None] * len(user_ids),
+        })
+
+        artists = (
+            fma_df[["artist_id", "artist_name"]]
+            .dropna(subset=["artist_name"])
+            .copy()
+        )
+
+        artists["artist_name"] = (
+            artists["artist_name"]
+            .astype(str)
+            .str.strip()
+        )
+
+        artists = artists.drop_duplicates(
+            subset=["artist_id", "artist_name"]
+        ).reset_index(drop=True)
+
+        dim_artist = pd.DataFrame({
+            "artist_key": range(1, len(artists) + 1),
+            "source_artist_id": [
+                int(x) if pd.notna(x) else None
+                for x in artists["artist_id"]
+            ],
+            "artist_name": artists["artist_name"],
+        })
+
+        genres = sorted(
+            x for x in
+            fma_df["genre"].dropna().astype(str).str.strip().unique()
+            if x and x.lower() != "nan"
+        )
+
+        dim_genre = pd.DataFrame({
+            "genre_key": range(1, len(genres) + 1),
+            "genre_name": genres,
+        })
+
+        activity_dates = (
+            pd.to_datetime(activity_df["started_at"], errors="coerce")
+            .dropna()
+            .dt.date
+            .unique()
+        )
+
+        dim_date_rows = []
+
+        for date_value in sorted(activity_dates):
+            month = date_value.month
+
+            dim_date_rows.append({
+                "date_key": int(date_value.strftime("%Y%m%d")),
+                "full_date": date_value,
+                "day": date_value.day,
+                "month": month,
+                "month_name": date_value.strftime("%B"),
+                "quarter": ((month - 1) // 3) + 1,
+                "year": date_value.year,
+            })
+
+        dim_date = pd.DataFrame(dim_date_rows)
+
+        artist_by_id = {
+            int(row.source_artist_id): int(row.artist_key)
+            for _, row in dim_artist.iterrows()
+            if pd.notna(row.source_artist_id)
+        }
+
+        artist_by_name = {
+            row.artist_name: int(row.artist_key)
+            for _, row in dim_artist.iterrows()
+        }
+
+        genre_map = {
+            row.genre_name: int(row.genre_key)
+            for _, row in dim_genre.iterrows()
+        }
+
+        user_map = {
+            int(row.user_id): int(row.user_key)
+            for _, row in dim_user.iterrows()
+        }
+
+        song_rows = []
+
+        for song_key, (_, row) in enumerate(fma_df.iterrows(), start=1):
+            artist_key = None
+
+            if pd.notna(row.get("artist_id")):
+                artist_key = artist_by_id.get(int(row["artist_id"]))
+
+            if artist_key is None and pd.notna(row.get("artist_name")):
+                artist_key = artist_by_name.get(
+                    str(row["artist_name"]).strip()
+                )
+
+            genre_key = None
+
+            if pd.notna(row.get("genre")):
+                genre_key = genre_map.get(
+                    str(row["genre"]).strip()
+                )
+
+            song_rows.append({
+                "song_key": song_key,
+                "source_track_id": int(row["track_id"]),
+                "title": str(row["title"]),
+                "artist_key": artist_key,
+                "genre_key": genre_key,
+                "album_id": (
+                    int(row["album_id"])
+                    if pd.notna(row.get("album_id"))
+                    else None
+                ),
+                "album_title": (
+                    str(row["album_title"])
+                    if pd.notna(row.get("album_title"))
+                    else None
+                ),
+                "duration_seconds": (
+                    float(row["duration_seconds"])
+                    if pd.notna(row.get("duration_seconds"))
+                    else None
+                ),
+                "fma_listens": (
+                    int(row["fma_listens"])
+                    if pd.notna(row.get("fma_listens"))
+                    else None
+                ),
+                "fma_favorites": (
+                    int(row["fma_favorites"])
+                    if pd.notna(row.get("fma_favorites"))
+                    else None
+                ),
+                "fma_interest": (
+                    int(row["fma_interest"])
+                    if pd.notna(row.get("fma_interest"))
+                    else None
+                ),
+            })
+
+        dim_song = pd.DataFrame(song_rows)
+
+        song_map = dict(
+            zip(
+                dim_song["source_track_id"].astype(int),
+                dim_song["song_key"].astype(int),
+            )
+        )
+
+        song_lookup = dim_song[
+            [
+                "source_track_id",
+                "song_key",
+                "artist_key",
+                "genre_key",
+            ]
+        ].copy()
+
+        activity = activity_df.copy()
+
+        activity["user_key"] = (
+            activity["user_id"]
+            .astype(int)
+            .map(user_map)
+        )
+
+        activity = activity.merge(
+            song_lookup,
+            left_on="song_id",
+            right_on="source_track_id",
+            how="inner",
+        )
+
+        activity["started_at"] = pd.to_datetime(
+            activity["started_at"],
+            errors="coerce",
+        )
+
+        activity = activity.dropna(subset=["started_at"])
+
+        activity["date_key"] = activity["started_at"].dt.strftime(
+            "%Y%m%d"
+        ).astype(int)
+
+        activity["duration_played"] = pd.to_numeric(
+            activity["duration_played"],
+            errors="coerce",
+        ).fillna(0)
+
+        activity["completed"] = activity["completed"].astype(bool)
+        activity["liked"] = activity["liked"].astype(bool)
+
+        fact_listening = pd.DataFrame({
+            "listening_key": range(1, len(activity) + 1),
+            "user_key": activity["user_key"].astype(int),
+            "song_key": activity["song_key"].astype(int),
+            "artist_key": activity["artist_key"],
+            "genre_key": activity["genre_key"],
+            "date_key": activity["date_key"],
+            "started_at": activity["started_at"],
+            "duration_played": activity["duration_played"],
+            "completed": activity["completed"],
+            "liked": activity["liked"],
+        })
+
+        dim_user.to_sql(
+            "dim_user",
             conn,
-            fma_df,
-            activity_df,
+            if_exists="append",
+            index=False,
+            chunksize=2000,
+            method="multi",
         )
 
-        print(
-            "Dimensions loaded:",
-            "users =", len(user_map),
-            "| artists =", len(artist_map),
-            "| genres =", len(genre_map),
-            "| dates =", len(date_map),
-            "| songs =", len(song_map),
-        )
-
-        print("\nLoading fact table...")
-
-        fact_count = load_fact_table(
+        dim_artist.to_sql(
+            "dim_artist",
             conn,
-            activity_df,
-            user_map,
-            artist_map,
-            genre_map,
-            date_map,
-            song_map,
+            if_exists="append",
+            index=False,
+            chunksize=2000,
+            method="multi",
         )
 
-        conn.commit()
+        dim_genre.to_sql(
+            "dim_genre",
+            conn,
+            if_exists="append",
+            index=False,
+            chunksize=2000,
+            method="multi",
+        )
 
-        print("\n========== WAREHOUSE BUILD COMPLETE ==========")
-        print(f"dim_user: {len(user_map)}")
-        print(f"dim_song: {len(song_map)}")
-        print(f"dim_genre: {len(genre_map)}")
-        print(f"dim_artist: {len(artist_map)}")
-        print(f"dim_date: {len(date_map)}")
-        print(f"fact_listening: {fact_count}")
-        print(f"Warehouse: {WAREHOUSE_DB}")
-        print("==============================================")
+        dim_date.to_sql(
+            "dim_date",
+            conn,
+            if_exists="append",
+            index=False,
+            chunksize=2000,
+            method="multi",
+        )
 
-    finally:
-        conn.close()
+        dim_song.to_sql(
+            "dim_song",
+            conn,
+            if_exists="append",
+            index=False,
+            chunksize=2000,
+            method="multi",
+        )
+
+        fact_listening.to_sql(
+            "fact_listening",
+            conn,
+            if_exists="append",
+            index=False,
+            chunksize=2000,
+            method="multi",
+        )
+
+        print("\n========== POSTGRESQL WAREHOUSE COMPLETE ==========")
+        print(f"dim_user: {len(dim_user)}")
+        print(f"dim_song: {len(dim_song)}")
+        print(f"dim_genre: {len(dim_genre)}")
+        print(f"dim_artist: {len(dim_artist)}")
+        print(f"dim_date: {len(dim_date)}")
+        print(f"fact_listening: {len(fact_listening)}")
+        print("Database: PostgreSQL")
+        print("====================================================")
 
 
 if __name__ == "__main__":
