@@ -1,7 +1,8 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from sqlalchemy import text
 
 from app.database import engine
+from app.deps import require_admin
 
 router = APIRouter(
     prefix="/analytics",
@@ -10,7 +11,7 @@ router = APIRouter(
 
 
 @router.get("/dashboard")
-def dashboard():
+def dashboard(admin=Depends(require_admin)):
     with engine.connect() as conn:
 
         summary = conn.execute(

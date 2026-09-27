@@ -5,15 +5,21 @@ import Dashboard from "./Dashboard";
 const API = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
 function App() {
-  /* =====================================================
-     CORE STATE
-     ===================================================== */
-
+  
   const [songs, setSongs] = useState([]);
   const [q, setQ] = useState("");
   const [selected, setSelected] = useState(null);
 
   const [token, setToken] = useState(localStorage.getItem("token") || "");
+  const [user, setUser] = useState(null);
+
+  const [showAuth, setShowAuth] = useState(false);
+  const [authMode, setAuthMode] = useState("login");
+
+  const [authName, setAuthName] = useState("");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
 
   const [likedSongs, setLikedSongs] = useState([]);
 
@@ -443,6 +449,30 @@ function App() {
     return () => clearTimeout(timer);
   }, [status]);
 
+  useEffect(() => {
+    async function restoreSession() {
+      if (!token) return;
+
+      try {
+        const res = await axios.get(`${API}/api/auth/me`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        setUser(res.data);
+      } catch (err) {
+        console.error("Session restore failed:", err);
+
+        localStorage.removeItem("token");
+        setToken("");
+        setUser(null);
+      }
+    }
+
+    restoreSession();
+  }, [token]);
+
   /* =====================================================
      GLOBAL KEYBOARD CONTROLS
      ===================================================== */
@@ -480,40 +510,81 @@ function App() {
   }, []);
 
   /* =====================================================
-     DEMO LOGIN
+    LOGIN & REGISTER
      ===================================================== */
 
-  async function loginDemo() {
-    if (loggingIn) return;
+  async function login() {
+    if (authLoading) return;
 
     try {
-      setLoggingIn(true);
+      setAuthLoading(true);
       setError("");
 
       const form = new URLSearchParams();
-
-      form.append("username", "demo@minispotify.local");
-
-      form.append("password", "demo1234");
+      form.append("username", authEmail.trim().toLowerCase());
+      form.append("password", authPassword);
 
       const res = await axios.post(`${API}/api/auth/login`, form);
 
       const accessToken = res.data.access_token;
 
       localStorage.setItem("token", accessToken);
-
       setToken(accessToken);
 
-      setStatus("✓ Welcome back, Demo User");
+      const me = await axios.get(`${API}/api/auth/me`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      setUser(me.data);
+      setShowAuth(false);
+
+      setAuthEmail("");
+      setAuthPassword("");
+
+      setStatus(`Welcome, ${me.data.name}`);
     } catch (err) {
       console.error("Login error:", err);
 
-      setStatus("Login failed. Please make sure the backend is running.");
+      setStatus(
+        err.response?.data?.detail ||
+        "Login failed. Please check your email and password."
+      );
     } finally {
-      setLoggingIn(false);
+      setAuthLoading(false);
     }
   }
 
+  async function register() {
+    if (authLoading) return;
+
+    try {
+      setAuthLoading(true);
+      setError("");
+
+      await axios.post(`${API}/api/auth/register`, {
+        name: authName.trim(),
+        email: authEmail.trim().toLowerCase(),
+        password: authPassword,
+      });
+
+      setAuthMode("login");
+      setAuthName("");
+      setAuthPassword("");
+
+      setStatus("Account created. Please log in.");
+    } catch (err) {
+      console.error("Register error:", err);
+
+      setStatus(
+        err.response?.data?.detail ||
+        "Registration failed."
+      );
+    } finally {
+      setAuthLoading(false);
+    }
+  }
   /* =====================================================
      LOAD LIKED SONGS
      ===================================================== */
@@ -686,17 +757,18 @@ function App() {
      LOGOUT
      ===================================================== */
 
-  function logoutDemo() {
+  function logout() {
     localStorage.removeItem("token");
 
     setToken("");
+    setUser(null);
     setLikedSongs([]);
     setPlaylists([]);
     setSelectedPlaylist(null);
     setPlaylistSongs([]);
     setSelected(null);
 
-    setStatus("Signed out of Demo User");
+    setStatus("You have been logged out.");
   }
 
   /* =====================================================
@@ -799,6 +871,93 @@ function App() {
 
       <div className="ambient ambient-three" aria-hidden="true" />
 
+      {showAuth && (
+        <div className="auth-overlay">
+          <div className="auth-modal">
+            <div className="auth-header">
+              <div>
+                <span className="search-eyebrow">
+                  {authMode === "login" ? "WELCOME BACK" : "JOIN MINI SPOTIFY"}
+                </span>
+
+                <h2>
+                  {authMode === "login" ? "Login" : "Create account"}
+                </h2>
+              </div>
+
+              <button
+                type="button"
+                className="auth-close"
+                onClick={() => setShowAuth(false)}
+                aria-label="Close authentication dialog"
+              >
+                Close
+              </button>
+            </div>
+
+            {authMode === "register" && (
+              <label className="auth-field">
+                <span>Name</span>
+                <input
+                  value={authName}
+                  onChange={(e) => setAuthName(e.target.value)}
+                  placeholder="Your name"
+                />
+              </label>
+            )}
+
+            <label className="auth-field">
+              <span>Email</span>
+              <input
+                type="email"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                placeholder="you@example.com"
+              />
+            </label>
+
+            <label className="auth-field">
+              <span>Password</span>
+              <input
+                type="password"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                placeholder="Your password"
+              />
+            </label>
+
+            <button
+              type="button"
+              className="auth-submit"
+              disabled={authLoading}
+              onClick={authMode === "login" ? login : register}
+            >
+              {authLoading
+                ? "Please wait..."
+                : authMode === "login"
+                  ? "Login"
+                  : "Create account"}
+            </button>
+
+            <button
+              type="button"
+              className="auth-switch"
+              onClick={() => {
+                setAuthMode(
+                  authMode === "login"
+                    ? "register"
+                    : "login"
+                );
+              }}
+            >
+              {authMode === "login"
+                ? "New here? Create an account"
+                : "Already have an account? Login"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* =================================================
           HEADER
           ================================================= */}
@@ -821,14 +980,15 @@ function App() {
         </div>
 
         <div className="header-actions">
-          <button
-            className={`dashboard-button ${showDashboard ? "dashboard-active" : ""}`}
-            type="button"
-            onClick={() => setShowDashboard((prev) => !prev)}
-          >
-            <span>◈</span>
-            {showDashboard ? "Library" : "Analytics"}
-          </button>
+          {user?.role === "admin" && (
+            <button
+              className={`dashboard-button ${showDashboard ? "dashboard-active" : ""}`}
+              type="button"
+              onClick={() => setShowDashboard((prev) => !prev)}
+            >
+              Analytics
+            </button>
+          )}
           <button
             className="shortcut-hint"
             type="button"
@@ -839,19 +999,37 @@ function App() {
             <kbd>/</kbd>
           </button>
 
-          <button
-            className={`login-button ${token ? "logged-in" : ""}`}
-            onClick={token ? logoutDemo : loginDemo}
-            disabled={loggingIn}
-            title={token ? "Click to sign out" : "Sign in with demo account"}
-          >
-            <span className="login-dot" />
+          {user ? (
+            <div className="user-menu">
+              <span className="user-name">{user.name}</span>
 
-            {loggingIn ? "Signing In..." : token ? "✓ Logged In" : "Demo Login"}
-          </button>
+              {user.role === "admin" && (
+                <span className="user-role">Admin</span>
+              )}
+
+              <button
+                type="button"
+                className="login-button"
+                onClick={logout}
+              >
+                Logout
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="login-button"
+              onClick={() => {
+                setAuthMode("login");
+                setShowAuth(true);
+              }}
+            >
+              Login
+            </button>
+          )}
         </div>
       </header>
-      {showDashboard && <Dashboard />}
+      {showDashboard && <Dashboard token={token} />}
 
       {/* =================================================
           HERO / LIBRARY INTRO
@@ -880,7 +1058,7 @@ function App() {
           >
             <span className="stat-icon">♪</span>
 
-            <span className="stat-value">{totalSongs}</span>
+            <span className="stat-value">106573</span>
 
             <span className="stat-label">Songs</span>
           </button>

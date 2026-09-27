@@ -17,7 +17,7 @@ function formatHours(seconds) {
   return `${hours.toFixed(1)} hrs`;
 }
 
-function Dashboard() {
+function Dashboard({ token }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -27,11 +27,16 @@ function Dashboard() {
       setLoading(true);
       setError("");
 
-      const response = await axios.get(
+      const res = await axios.get(
         `${API}/api/analytics/dashboard`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        },
       );
 
-      setData(response.data);
+      setData(res.data);
     } catch (err) {
       console.error("Dashboard loading error:", err);
 
@@ -44,8 +49,10 @@ function Dashboard() {
   }
 
   useEffect(() => {
-    loadDashboard();
-  }, []);
+    if (token) {
+      loadDashboard();
+    }
+  }, [token]);
 
   const maxSongPlays = useMemo(() => {
     if (!data?.top_songs?.length) return 1;
