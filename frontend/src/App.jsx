@@ -38,6 +38,15 @@ function App() {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
+  const [playlistModal, setPlaylistModal] = useState({
+    open: false,
+    mode: null,
+    song: null,
+  });
+
+  const [playlistNameInput, setPlaylistNameInput] = useState("");
+  const [playlistToAdd, setPlaylistToAdd] = useState("");
+
   const [isSearching, setIsSearching] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showDashboard, setShowDashboard] = useState(false);
@@ -104,20 +113,47 @@ function App() {
      CREATE PLAYLIST
      ================================================= */
 
+  function openCreatePlaylistModal() {
+    if (!token) {
+      setStatus("Please log in first");
+      return;
+    }
+
+    setPlaylistNameInput("");
+    setPlaylistModal({
+      open: true,
+      mode: "create",
+      song: null,
+    });
+  }
+
+  function closePlaylistModal() {
+    setPlaylistModal({
+      open: false,
+      mode: null,
+      song: null,
+    });
+    setPlaylistNameInput("");
+    setPlaylistToAdd("");
+  }
+
   async function createPlaylist() {
     if (!token) {
       setStatus("Please log in first");
       return;
     }
 
-    const name = window.prompt("Enter playlist name:");
+    const name = playlistNameInput.trim();
 
-    if (!name?.trim()) return;
+    if (!name) {
+      setStatus("Please enter a playlist name");
+      return;
+    }
 
     try {
       await axios.post(
         `${API}/api/playlists`,
-        { name: name.trim() },
+        { name },
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -126,10 +162,14 @@ function App() {
       );
 
       await loadPlaylists();
+      closePlaylistModal();
       setStatus("Playlist created");
     } catch (err) {
       console.error("Playlist creation error:", err);
-      setStatus("Unable to create playlist");
+      setStatus(
+        err.response?.data?.detail ||
+        "Unable to create playlist"
+      );
     }
   }
 
@@ -170,7 +210,7 @@ function App() {
      ADD SONG TO PLAYLIST
      ================================================= */
 
-  async function addSongToPlaylist(song) {
+  function openAddToPlaylistModal(song) {
     if (!token) {
       setStatus("Please log in first");
       return;
@@ -181,31 +221,34 @@ function App() {
       return;
     }
 
-    const playlistChoices = playlists
-      .map((playlist, index) => `${index + 1}. ${playlist.name}`)
-      .join("\n");
+    setPlaylistToAdd("");
+    setPlaylistModal({
+      open: true,
+      mode: "add",
+      song,
+    });
+  }
 
-    const choice = window.prompt(
-      `Add "${song.title}" to which playlist?\n\n${playlistChoices}\n\nEnter number:`
+  async function addSongToPlaylist() {
+    const song = playlistModal.song;
+
+    if (!token || !song) {
+      return;
+    }
+
+    if (!playlistToAdd) {
+      setStatus("Please choose a playlist");
+      return;
+    }
+
+    const playlist = playlists.find(
+      (item) => String(item.id) === String(playlistToAdd)
     );
 
-    if (choice === null) {
-      setStatus("Add cancelled");
+    if (!playlist) {
+      setStatus("Please choose a valid playlist");
       return;
     }
-
-    const index = Number(choice) - 1;
-
-    if (
-      !Number.isInteger(index) ||
-      index < 0 ||
-      index >= playlists.length
-    ) {
-      setStatus("Invalid playlist number");
-      return;
-    }
-
-    const playlist = playlists[index];
 
     setStatus(`Adding "${song.title}"...`);
 
@@ -224,6 +267,7 @@ function App() {
 
       console.log("Add response:", res.data);
 
+      closePlaylistModal();
       setStatus(`✓ Added "${song.title}" to "${playlist.name}"`);
 
       if (selectedPlaylist?.id === playlist.id) {
@@ -488,6 +532,11 @@ function App() {
 
       /* Escape = close player */
       if (event.key === "Escape") {
+        if (playlistModal.open) {
+          closePlaylistModal();
+          return;
+        }
+
         setSelected(null);
         return;
       }
@@ -862,6 +911,142 @@ function App() {
   return (
     <div className={`page ${showDashboard ? "dashboard-mode" : ""}`}>
       {/* =================================================
+          PLAYLIST MODAL
+          ================================================= */}
+
+      {playlistModal.open && (
+        <div
+          className="playlist-modal-overlay"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closePlaylistModal();
+            }
+          }}
+        >
+          <div
+            className="playlist-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="playlist-modal-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="playlist-modal-header">
+              <div>
+                <span className="search-eyebrow">
+                  {playlistModal.mode === "create"
+                    ? "YOUR LIBRARY"
+                    : "ADD TO PLAYLIST"}
+                </span>
+                <h2 id="playlist-modal-title">
+                  {playlistModal.mode === "create"
+                    ? "Create Playlist"
+                    : "Choose Playlist"}
+                </h2>
+              </div>
+
+              <button
+                type="button"
+                className="playlist-modal-close"
+                onClick={closePlaylistModal}
+                aria-label="Close playlist dialog"
+              >
+                ×
+              </button>
+            </div>
+
+            {playlistModal.mode === "create" ? (
+              <form
+                className="playlist-modal-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  createPlaylist();
+                }}
+              >
+                <label className="playlist-modal-field">
+                  <span>Playlist name</span>
+                  <input
+                    autoFocus
+                    type="text"
+                    value={playlistNameInput}
+                    onChange={(event) => setPlaylistNameInput(event.target.value)}
+                    placeholder="e.g. My Favorites"
+                    maxLength={100}
+                  />
+                </label>
+
+                <div className="playlist-modal-actions">
+                  <button
+                    type="button"
+                    className="playlist-modal-cancel"
+                    onClick={closePlaylistModal}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="playlist-modal-primary"
+                    disabled={!playlistNameInput.trim()}
+                  >
+                    Create Playlist
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="playlist-modal-form">
+                <div className="playlist-modal-song">
+                  <span className="playlist-modal-song-icon">♫</span>
+                  <div>
+                    <span className="playlist-modal-song-label">SONG</span>
+                    <strong title={playlistModal.song?.title}>
+                      {playlistModal.song?.title}
+                    </strong>
+                    <span title={playlistModal.song?.artist}>
+                      {playlistModal.song?.artist}
+                    </span>
+                  </div>
+                </div>
+
+                <label className="playlist-modal-field">
+                  <span>Choose a playlist</span>
+                  <select
+                    autoFocus
+                    value={playlistToAdd}
+                    onChange={(event) => setPlaylistToAdd(event.target.value)}
+                  >
+                    <option value="">Select a playlist...</option>
+                    {playlists.map((playlist) => (
+                      <option key={playlist.id} value={playlist.id}>
+                        {playlist.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <div className="playlist-modal-actions">
+                  <button
+                    type="button"
+                    className="playlist-modal-cancel"
+                    onClick={closePlaylistModal}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="playlist-modal-primary"
+                    onClick={addSongToPlaylist}
+                    disabled={!playlistToAdd}
+                  >
+                    Add to Playlist
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* =================================================
           AMBIENT BACKGROUND
           ================================================= */}
 
@@ -1223,7 +1408,7 @@ function App() {
           </div>
         </div>
 
-        <button type="button" onClick={createPlaylist}>
+        <button type="button" onClick={openCreatePlaylistModal}>
           + Create Playlist
         </button>
 
@@ -1511,7 +1696,7 @@ function App() {
 
                       <button
                         className="playlist-button"
-                        onClick={() => addSongToPlaylist(song)}
+                        onClick={() => openAddToPlaylistModal(song)}
                         type="button"
                       >
                         + Playlist
